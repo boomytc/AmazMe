@@ -73,6 +73,11 @@ export class PythonDesktopApi {
 		return { active: value.active };
 	}
 
+    async localePreference(): Promise<string> {
+        const value = (await this.snapshot()).raw.locale;
+        return typeof value === "string" ? value : "auto";
+    }
+
 	async readPreferences(): Promise<DesktopPreferences> {
 		return (await this.snapshot()).preferences;
 	}

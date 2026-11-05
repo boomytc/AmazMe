@@ -87,7 +87,8 @@
       "public": [
         "amazme_backend.profiles.configuration",
         "amazme_backend.profiles.layout",
-        "amazme_backend.profiles.profile"
+        "amazme_backend.profiles.profile",
+        "amazme_backend.profiles.locations"
       ],
       "imports": [
         "amazme_backend.contracts.accounts",
@@ -417,7 +418,8 @@
         "amazme_backend.profiles.layout",
         "amazme_backend.profiles.profile",
         "amazme_backend.shared.errors",
-        "amazme_backend.shared.model"
+        "amazme_backend.shared.model",
+        "amazme_backend.profiles.locations"
       ]
     },
     "features.skills": {
@@ -756,7 +758,8 @@
         "amazme_backend.sessions.service",
         "amazme_backend.shared.errors",
         "amazme_backend.shared.model",
-        "amazme_backend.workspaces.paths"
+        "amazme_backend.workspaces.paths",
+        "amazme_backend.profiles.locations"
       ]
     },
     "plugin_api": {
@@ -1031,6 +1034,9 @@
       "amazme_backend.bootstrap.transient": [
         "spawn",
         "lifecycle"
+      ],
+      "amazme_backend.bootstrap.local": [
+        "spawn"
       ]
     },
     "scoped_apis": [

@@ -75,5 +75,5 @@ export function getAgentDir(): string {
 	if (envDir) {
 		return expandTildePath(envDir);
 	}
-	return join(homedir(), CONFIG_DIR_NAME, "agent");
+	return join(process.env.AMAZME_HOME ? expandTildePath(process.env.AMAZME_HOME) : join(homedir(), CONFIG_DIR_NAME), "agent");
 }

@@ -4,7 +4,7 @@ import { constants } from "node:fs";
 import { access, copyFile, cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
@@ -14,6 +14,11 @@ const icon = join(packageDirectory, "assets", "app-icon.icns");
 
 /** Dock labels use the native bundle identity, not Electron's app.setName(). */
 async function macosExecutable(electron: string): Promise<string> {
+    const backend = process.env.AMAZME_PYTHON_BACKEND;
+    const runtimeEnv = {
+        AMAZME_NODE: process.env.AMAZME_NODE || process.execPath,
+        ...(backend ? { AMAZME_PYTHON_BACKEND: resolve(backend) } : {}),
+    };
 	const source = dirname(dirname(dirname(electron)));
 	const info = join(source, "Contents", "Info.plist");
 	const runtime = await stat(electron);
@@ -21,6 +26,7 @@ async function macosExecutable(electron: string): Promise<string> {
 	const digest = createHash("sha256")
 		.update(electron)
 		.update(process.execPath)
+        .update(JSON.stringify(runtimeEnv))
 		.update(packageDirectory)
 		.update(manifest)
 		.update(`${runtime.size}:${runtime.mtimeMs}`)
@@ -63,6 +69,7 @@ async function macosExecutable(electron: string): Promise<string> {
 		await writeFile(join(entry, "main.mjs"), [
 			'import { homedir } from "node:os";',
 			"process.env.INIT_CWD ??= homedir();",
+                ...Object.entries(runtimeEnv).map(([key, value]) => `process.env[${JSON.stringify(key)}] ??= ${JSON.stringify(value)};`),
 			`await import(${JSON.stringify(pathToFileURL(join(packageDirectory, "dist", "main.js")).href)});`,
 			"",
 		].join("\n"));
@@ -87,7 +94,7 @@ async function start(): Promise<void> {
 	const args = process.platform === "darwin" ? process.argv.slice(2) : [packageDirectory, ...process.argv.slice(2)];
 	const child = spawn(executable, args, {
 		stdio: "inherit", windowsHide: false,
-		env: { ...process.env, INIT_CWD: process.env.INIT_CWD ?? process.cwd() },
+		env: { ...process.env, AMAZME_NODE: process.env.AMAZME_NODE || process.execPath, INIT_CWD: process.env.INIT_CWD ?? process.cwd() },
 	});
 	let closed = false;
 	child.once("error", (error) => {

@@ -6,7 +6,6 @@ in the local Pi checkout (be14d973). Resource loading never executes a skill.
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, field
 from html import escape
@@ -18,6 +17,7 @@ from pathspec import GitIgnoreSpec
 
 from amazme_backend.contracts.resources import ResourceCatalog, ResourceItem, ResourceOptions
 from amazme_backend.contracts.skills import FILE_LIMIT
+from amazme_backend.profiles.locations import agent_directory as default_agent_directory
 from amazme_backend.profiles.profile import Profile
 from amazme_backend.shared.errors import BackendError
 
@@ -392,15 +392,7 @@ def _resolve_path(path: str, cwd: Path) -> Path:
 
 
 def agent_directory(profile: Profile) -> Path:
-    return (
-        Path(
-            profile.config.user_resources
-            or os.environ.get("AMAZME_CODING_AGENT_DIR")
-            or str(Path.home() / ".amazme/agent")
-        )
-        .expanduser()
-        .resolve()
-    )
+    return Path(profile.config.user_resources).expanduser().resolve() if profile.config.user_resources else default_agent_directory()
 
 
 def session_resources(

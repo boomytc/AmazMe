@@ -13,21 +13,6 @@ export interface PythonReady {
 	readonly profileId: string;
 }
 
-export interface PythonCommand {
-	readonly command: "init" | "serve";
-	readonly args: readonly string[];
-}
-
-export interface PythonDesktopPlan {
-	readonly executable: string;
-	readonly cwd: string;
-	readonly env: NodeJS.ProcessEnv;
-	readonly entries: readonly string[];
-	/** Short commands that finish before the supervised server starts. */
-	readonly preflight: readonly PythonCommand[];
-	readonly serveArgs: readonly string[];
-}
-
 /** Packaged onedir, or the explicit path a developer pointed at. Never a system `python`. */
 export function resolvePythonBackend(env: NodeJS.ProcessEnv, resourcesPath: string | undefined): string | undefined {
 	const override = env.AMAZME_PYTHON_BACKEND;
@@ -102,69 +87,16 @@ export function parsePythonReadyLine(line: string): PythonReady | undefined {
 	};
 }
 
-function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-	const copy: NodeJS.ProcessEnv = {};
-	for (const [key, value] of Object.entries(env)) {
-		if (value === undefined || key.startsWith("ELECTRON_") || key === "AMAZME_PYTHON_BACKEND") continue;
-		copy[key] = value;
-	}
-	return copy;
-}
-
 function distinctTokens(controlToken: string, webToken: string): void {
 	if (!CONTROL_TOKEN.test(controlToken) || controlToken === webToken) {
 		throw new Error("desktop control token must be the profile control token");
 	}
 }
 
-export function desktopPythonBootPlan(input: {
-	readonly executable: string;
-	readonly profile: string;
-	readonly workspace: string;
-	readonly providerConfig: string;
-	readonly profileExists: boolean;
-	readonly cwd: string;
-	readonly env: NodeJS.ProcessEnv;
-}): PythonDesktopPlan {
-	const preflight: PythonCommand[] = [];
-	if (!input.profileExists) {
-		preflight.push({
-			command: "init",
-			args: ["init", "--profile", input.profile, "--workspace", input.workspace, "--provider-config", input.providerConfig],
-		});
-	}
-	return {
-		executable: input.executable,
-		cwd: input.cwd,
-		env: childEnv(input.env),
-		entries: [input.executable],
-		preflight,
-		serveArgs: ["serve", "--profile", input.profile, "--port", "0"],
-	};
-}
-
 export function readControlToken(profile: string): string {
 	const token = readFileSync(join(profile, "control.token"), "utf8").trim();
 	if (!CONTROL_TOKEN.test(token)) throw new Error("desktop control token is missing");
 	return token;
-}
-
-/** Covers the host's 30s supervisor-exit wait and the shutdown request that precedes it. */
-export const PYTHON_SHUTDOWN_TIMEOUT_MS = 60_000;
-
-export function pythonShutdownRequest(ready: PythonReady, controlToken: string, webToken: string): {
-	readonly url: string;
-	readonly headers: { readonly Authorization: string; readonly "content-type": "application/json" };
-	readonly body: string;
-	readonly timeoutMs: number;
-} {
-	distinctTokens(controlToken, webToken);
-	return {
-		url: `${ready.origin}/control/shutdown`,
-		headers: { Authorization: `Bearer ${controlToken}`, "content-type": "application/json" },
-		body: JSON.stringify({ host_epoch: ready.hostEpoch, build_id: ready.buildId }),
-		timeoutMs: PYTHON_SHUTDOWN_TIMEOUT_MS,
-	};
 }
 
 export function pythonPrepareUpdateRequest(
@@ -333,9 +265,4 @@ export function pythonResumeUpdateRequest(ready: PythonReady, controlToken: stri
 		headers: { Authorization: `Bearer ${controlToken}` },
 		body: "",
 	};
-}
-
-/** Python supplies model defaults; only an explicit smoke run selects its fixture. */
-export function initialPythonProvider(smoke: boolean): {provider:"deepseek" | "faux"; model?:string; base_url?:string} {
-    return smoke ? {provider:"faux", model:"faux", base_url:""} : {provider:"deepseek"};
 }

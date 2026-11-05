@@ -23,12 +23,8 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path, kind
     retain_inherited(lifetime_fd, profile, "execution", instance)
     control = socket.socket(fileno=0)
     if kind == "codemode":
-        import sys
-
         from amazme_backend.execution.codemode.runtime import HELPER, bundled_node
-        from amazme_backend.profiles.profile import Profile
-        root = None if getattr(sys, "frozen", False) else Path(Profile(profile).config.resources)
-        command = [str(bundled_node(root)), str(HELPER)]
+        command = [str(bundled_node()), str(HELPER)]
     else:
         command = child_command({"pty":"pty-gate", "mcp":"mcp-gate", "plugin":"plugin-gate"}[kind])
     gate = subprocess.Popen(command, stdin=0, stdout=1,

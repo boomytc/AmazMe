@@ -2,21 +2,38 @@ import argparse
 import asyncio
 import json
 import os
-import secrets
 import sys
 import time
 from pathlib import Path
 
 import httpx
 
+from amazme_backend.contracts.execution import ProcessLease
+from amazme_backend.contracts.identity import HostReady, Identity
 from amazme_backend.contracts.profiles import ProviderConfig
-from amazme_backend.execution.processes import retain_inherited
-from amazme_backend.platform.private_files import lock, private_write
-from amazme_backend.platform.resources import resource_root
-from amazme_backend.profiles.profile import Profile
+from amazme_backend.execution.processes import exited, retain_inherited
+from amazme_backend.platform.private_files import lock
+from amazme_backend.profiles.profile import Profile, live_host_ready
+
+
+def _stopped(profile: Profile) -> bool:
+    try:
+        with lock(profile.path / "host.lock"), lock(profile.path / "supervisor.lock"):
+            return all(exited(ProcessLease.model_validate_json(path.read_bytes()))
+                       for path in (profile.path / "processes").glob("*.lock"))
+    except BlockingIOError:
+        return False
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "connect":
+        from amazme_backend.bootstrap.local import main as connect_main
+        connect_main(sys.argv[2:])
+        return
+    if len(sys.argv) > 1 and sys.argv[1] == "migrate-profile":
+        from amazme_backend.bootstrap.migration import main as migration_main
+        migration_main(sys.argv[2:])
+        return
     if len(sys.argv) > 1 and sys.argv[1] == "client-outbox":
         from amazme_backend.interfaces.client_outbox import main as outbox_main
         raise SystemExit(outbox_main())
@@ -64,7 +81,7 @@ def main() -> None:
         raise SystemExit(run_client(sys.argv[2:]))
     parser = argparse.ArgumentParser(prog="amazme-backend")
     parser.add_argument("mode", choices=["init", "serve", "worker", "supervisor", "stop", "pair"])
-    parser.add_argument("--profile", type=Path, required=True)
+    parser.add_argument("--profile", type=Path)
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--provider-config", type=Path)
     parser.add_argument("--source-profile", type=Path)
@@ -76,48 +93,24 @@ def main() -> None:
     parser.add_argument("--validation", action="store_true")
     parser.add_argument("--approval-policy", choices=["auto", "mutations", "all"], default="mutations")
     parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--expected-build")
+    parser.add_argument("--expected-epoch", type=int)
     args = parser.parse_args()
+    from amazme_backend.profiles.locations import local_profile
+    if args.mode in {"worker", "supervisor"} and args.profile is None:
+        parser.error("internal services require --profile")
+    args.profile = local_profile(args.profile)
     os.umask(0o077)
     if args.mode == "init":
-        if args.source_profile:
-            if not args.workspace or args.provider_config:
-                parser.error("init --source-profile requires --workspace and excludes --provider-config")
-            workspace = args.workspace.resolve(strict=True)
-            if not workspace.is_dir():
-                parser.error("workspace must be a directory")
-            source = Profile(args.source_profile)
-            from amazme_backend.profiles.configuration import stored_provider
-            config = source.config.model_copy(update={
-                "profile_id": secrets.token_hex(16), "workspace": str(workspace),
-                "provider": stored_provider(source.config.provider), "account_profile": str(source.account_path),
-            })
-            args.profile.mkdir(parents=True, mode=0o700, exist_ok=False)
-            private_write(args.profile / "config.json", config.model_dump_json())
-            private_write(args.profile / "control.token", secrets.token_hex(32))
-            private_write(args.profile / "web.token", secrets.token_hex(24))
-            print(json.dumps({"profile": str(args.profile.resolve()), "workspace": str(workspace), "version": "0.1.0"}))
-            return
-        if not args.workspace or not args.provider_config:
-            parser.error("init requires --workspace and --provider-config")
-        workspace = args.workspace.resolve(strict=True)
-        if not workspace.is_dir():
-            parser.error("workspace must be a directory")
-        provider = ProviderConfig.model_validate_json(args.provider_config.read_bytes())
-        args.profile.mkdir(parents=True, mode=0o700, exist_ok=False)
-        provider_data = {**provider.model_dump(), "api_key": provider.api_key.get_secret_value()}
-        config = {"format": 2, "profile_id": secrets.token_hex(16), "workspace": str(workspace),
-                  "approval_policy": args.approval_policy,
-                  "resources": str(resource_root()), "provider": provider_data,
-                  "user_resources": str(Path(os.environ.get("AMAZME_CODING_AGENT_DIR", "~/.amazme/agent")).expanduser().resolve())}
-        private_write(args.profile / "config.json", json.dumps(config))
-        from amazme_backend.accounts.store import AccountStore
-        accounts = AccountStore(args.profile)
-        accounts.write(accounts.read())
-        provider_data["api_key"] = ""
-        private_write(args.profile / "config.json", json.dumps(config))
-        private_write(args.profile / "control.token", secrets.token_hex(32))
-        private_write(args.profile / "web.token", secrets.token_hex(24))
-        print(json.dumps({"profile": str(args.profile.resolve()), "workspace": str(workspace), "version": "0.1.0"}))
+        from amazme_backend.bootstrap.initialization import initialize
+        if not args.workspace or (not args.source_profile and not args.provider_config):
+            parser.error("init requires --workspace and --provider-config or --source-profile")
+        if args.source_profile and args.provider_config:
+            parser.error("init --source-profile excludes --provider-config")
+        provider = (ProviderConfig.model_validate_json(args.provider_config.read_bytes())
+                    if args.provider_config else ProviderConfig(provider="faux", model="faux"))
+        initialize(args.profile, args.workspace, provider, source=args.source_profile, approval=args.approval_policy)
+        print(json.dumps({"profile": str(args.profile), "workspace": str(args.workspace.resolve()), "version": "0.1.0"}))
         return
     profile = Profile(args.profile)
     if args.mode == "serve":
@@ -140,20 +133,35 @@ def main() -> None:
     elif args.mode == "pair":
         print((profile.path / "web.token").read_text().strip())
     elif args.mode == "stop":
-        ready = json.loads((profile.path / "ready.json").read_text())
-        response = httpx.post(ready["url"] + "/control/shutdown", timeout=10,
-                              headers={"Authorization": "Bearer " + profile.token},
-                              json={"host_epoch": ready["host_epoch"], "build_id": ready["build_id"]})
-        response.raise_for_status()
+        if _stopped(profile):
+            print("services stopped")
+            return
+        deadline = time.monotonic() + 90
+        while not (profile.path / "ready.json").exists():
+            if _stopped(profile):
+                print("services stopped")
+                return
+            if time.monotonic() >= deadline:
+                raise TimeoutError("host readiness still pending")
+            time.sleep(0.1)
+        ready = HostReady.model_validate_json((profile.path / "ready.json").read_bytes())
+        with httpx.Client(timeout=180, trust_env=False) as client:
+            bootstrap = client.get(ready.url + "/api/v1/bootstrap",
+                                   headers={"Authorization": "Bearer " + (profile.path / "web.token").read_text().strip()})
+            bootstrap.raise_for_status()
+            ready = live_host_ready(profile.config.profile_id, ready, Identity.model_validate_json(bootstrap.content))
+            if ((args.expected_build is not None and args.expected_build != ready.build_id)
+                    or (args.expected_epoch is not None and args.expected_epoch != ready.host_epoch)):
+                parser.error("stale_host_epoch")
+            response = client.post(ready.url + "/control/shutdown",
+                                   headers={"Authorization": "Bearer " + profile.token},
+                                   json={"host_epoch": ready.host_epoch, "build_id": ready.build_id})
+            response.raise_for_status()
         deadline = time.monotonic() + 180
-        while True:
-            try:
-                with lock(profile.path / "host.lock"), lock(profile.path / "supervisor.lock"):
-                    break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("shutdown still pending") from None
-                time.sleep(0.1)
+        while not _stopped(profile):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("shutdown still pending")
+            time.sleep(0.1)
         print("services stopped")
 
 

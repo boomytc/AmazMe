@@ -36,7 +36,29 @@
 2. 检测连接，勾选要启用的模型。
 3. 在「新聊天默认模型」中选择默认值。输入区的模型选择器只修改当前会话，不改写新聊天的默认值。
 
-关闭主窗口时，没有进行中的任务直接退出应用；有任务运行时才询问是否同时关闭后台，可记住选择，也可在设置中调整「空闲时直接退出」与「关闭窗口时询问」。通过 Dock 或托盘恢复窗口。托盘菜单或 `Cmd/Ctrl+Q` 始终表示退出，取消任务并回收自己拥有的资源。更多窗口行为见 [桌面说明](packages/gui/README.md)。
+Web、Desktop 和 CLI 默认共用 `~/.amazme/agent/python-host`。Host 按需启动并在客户端退出后继续运行。关闭桌面窗口时可隐藏窗口或退出桌面；菜单和托盘的「停止后台并退出」才会停止任务并断开所有客户端。更多窗口行为见 [桌面说明](packages/gui/README.md)。
+
+### 统一数据目录与迁移
+
+默认产品数据根是 `~/.amazme`。账号、会话、产品设置和执行账本在 `agent/python-host`，技能和模板在 `agent`，Electron 壳数据与更新状态在 `desktop`。浏览器的面板布局、输入历史和待发送草稿仍属于各窗口。
+
+`AMAZME_HOME` 改变产品根目录。`AMAZME_CODING_AGENT_DIR` 可覆盖 agent 目录，`AMAZME_PROFILE` 可单独选择业务 profile；显式 `--profile` 优先。`AMAZME_GUI_USER_DATA_DIR` 只选择桌面壳目录，不再隐式选择业务数据。
+
+旧版桌面数据位于 `~/Library/Application Support/AmazMe/python-profile`。检测到该目录时，新启动器要求先迁移，避免打开另一份空库。在仓库根目录先预检：
+
+```bash
+backend/.venv/bin/amazme-backend migrate-profile --source-profile "$HOME/Library/Application Support/AmazMe/python-profile"
+```
+
+确认目标只有空白 profile 后，执行迁移并正常停止两端服务：
+
+```bash
+backend/.venv/bin/amazme-backend migrate-profile --source-profile "$HOME/Library/Application Support/AmazMe/python-profile" --apply --stop
+```
+
+迁移保留来源 profile 的身份、工作区、凭据、会话和执行账本，在旧桌面路径留下迁移标记。旧目录仅在事务期间暂存，校验成功后自动删除，不保留备份。目标已有业务数据、外部账号库链接或未结算副作用时拒绝迁移。中断后用相同参数重跑，工具根据事务记录恢复；已启用的新库不会被旧快照覆盖。事务中的旧目录禁止作为运行 profile。
+
+两个入口都调用 Python 的 `connect`，并发启动只产生一个 Host。构建切换后的冻结校验和激活也由这个入口完成，只有正在运行的目标构建可以激活；校验失败时保持冻结。旧 Host 缺少共享连接能力时返回 `host_upgrade_required`；停止旧后端后再启动新版，不会另建一份数据。源码工具的 Node 由启动器显式传入；冻结后端始终使用包内 Node。
 
 ### 手动准备与其他客户端
 
@@ -136,7 +158,7 @@ RPC 客户端使用 `--mode rpc`，通道说明见 [RPC 入口](packages/coding-
 backend/.venv/bin/python -m amazme_backend stop --profile /absolute/profile
 ```
 
-`stop` 会停止该 profile 的 Host 及所属服务，所有连接它的客户端都会受影响。桌面端应优先使用窗口或托盘提供的显式退出操作。
+`stop` 会停止该 profile 的 Host 及所属服务，所有连接它的客户端都会受影响。桌面端可使用菜单或托盘的「停止后台并退出」；普通退出桌面会保留共享后台。
 
 ## 客户端与工具
 

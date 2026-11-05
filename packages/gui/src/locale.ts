@@ -35,7 +35,7 @@ async function storedLocale(path: string): Promise<string | undefined> {
 
 /** Interface locale is global-only, just like SettingsManager.getLocalePreference. No credentials are loaded. */
 export async function readDesktopLocalePreference(cwd: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
-	const configured = env[ENV_AGENT_DIR] || join(homedir(), CONFIG_DIR_NAME, "agent");
+	const configured = env[ENV_AGENT_DIR] || join(env.AMAZME_HOME ? expandTildePath(env.AMAZME_HOME) : join(homedir(), CONFIG_DIR_NAME), "agent");
 	const agent = resolve(cwd, expandTildePath(configured));
 	return storedLocale(join(agent, "settings.json"));
 }

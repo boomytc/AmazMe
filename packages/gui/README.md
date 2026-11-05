@@ -1,16 +1,18 @@
 # @amazme/gui
 
-Electron 窗口。它只拉起包内的 Python 后端，再把那个回环页面装进窗口。没有 Python 后端时启动失败，不回退到旧的网页宿主。右键菜单和出错弹框的中英文案用 `@amazme/web` 的 `desktop.*` 键（`./locale` 与 `./strings`），不另留一份目录。
+Electron 窗口。它通过包内 Python 的 `connect` 连接共享 Host，再把回环页面装进窗口。没有 Python 后端时启动失败，不回退到旧的网页宿主。右键菜单和出错弹框的中英文案用 `@amazme/web` 的 `desktop.*` 键（`./locale` 与 `./strings`），不另留一份目录。
 
 窗口图标与 macOS Dock 图标使用 Web 包的 `dist/page/app-icon.png`，网页标签使用同源 SVG favicon，并提供 32 像素 PNG 备用。图标沿用界面里的 AM 像素标记，资源随 Web 包构建复制，不依赖运行时生成。
 
 macOS 启动时在 `~/Library/Caches/AmazMe/desktop` 中缓存独立的 `AmazMe.app`，使用 AmazMe 的应用名称、标识和 ICNS 图标，确保 Dock 悬停与应用菜单显示正确名称。缓存应用绑定当前安装目录的桌面入口与系统 Node，退出后也能从 Dock 重新打开；没有指定工作目录时从用户主目录启动。它不是可独立移动的安装包。Electron、Node 路径或图标、启动脚本更新后重新生成；共享的 Electron 安装不被修改。Linux 和 Windows 沿用 Electron 的标准启动方式。
 
-子进程跑包内的 `amazme-backend`，读到就绪行再 `loadURL`，窗口开 `contextIsolation`、`sandbox`、`nodeIntegration: false`。
+短命连接进程跑包内的 `amazme-backend connect`，返回规范 profile、Host 身份和当前工作区后再 `loadURL`，窗口开 `contextIsolation`、`sandbox`、`nodeIntegration: false`。
 
 窗口外观由壳和页面共同决定，界面仍只有页面一份实现。macOS 用 `titleBarStyle: hiddenInset`，红绿灯放进页面自绘的 48px 标题栏：主进程固定 `trafficLightPosition {x:16,y:18}`，页面在 `:root[data-desktop="darwin"]` 时给标题栏留出 78px，整行作为拖动窗口的区域，按钮与输入框标记 `no-drag`。红绿灯坐标和标题栏高度是一对契约，改一侧要同步另一侧。窗口 resize 或切换主题时，渲染层把页面 canvas 色通过 `amazme:set-window-background` 交给主进程，原生底色不会停在上一个主题。Windows/Linux 保留系统标题栏，页面标题栏只作为工具条；浏览器打开同一页面时没有这层窗口处理。
 
-点击窗口关闭按钮时，默认没有进行中的任务就直接退出应用，不再弹出确认；有任务运行时才用系统原生弹窗询问是否同时关闭后台。选择“继续后台运行”只隐藏窗口，网页宿主和运行中的会话继续工作；Dock 或 `assets/tray-icon.png` 托盘恢复原窗口，不重复启动后端。“关闭后台并退出”走正常退出清理，“取消”保留窗口。弹窗可记住后台或退出选择；设置的“空闲时直接退出”控制空闲关闭是否直接退出，关闭后空闲关闭改按“关闭窗口时”偏好或询问处理；“关闭窗口时询问”控制有任务时是否弹窗。上述偏好沿用 Python 产品设置存储。应用菜单、托盘菜单和 `Cmd/Ctrl+Q` 始终表达退出意图，使用独立的停止任务确认，不修改关闭偏好。窗口、菜单与快捷键由同一生命周期状态机协调，重复请求不会并发弹窗或清理。
+点击关闭按钮时，默认空闲就退出桌面，有任务时按设置选择隐藏窗口或退出桌面。两种行为都保留共享 Host 和任务，`Cmd/Ctrl+Q` 也只退出桌面。菜单和托盘的「停止后台并退出」是独立的全局操作，会提示所有客户端都将断开，再正常停止 Host 及其服务。更新安装也显式停止后端。窗口退出不再以“谁启动进程”决定后台寿命。
+
+业务 profile 默认是 `~/.amazme/agent/python-host`，与 Web、CLI 共用。Electron `userData` 默认是 `~/.amazme/desktop`；首次启动迁入旧壳目录的更新持久状态，缓存重建。存在未完成旧更新或两边更新状态冲突时拒绝隐式搬迁。`AMAZME_GUI_USER_DATA_DIR` 只覆盖壳数据；隔离验收还须设置 `AMAZME_HOME` 或 `AMAZME_PROFILE`。迁移旧业务数据见[根目录说明](../../README.md#统一数据目录与迁移)。
 
 项目创建和编辑支持多个源文件夹。“添加文件夹”使用原生目录选择器；preload 只暴露目录选择、桌面菜单转发、窗口底色与平台标识这几项能力，主进程核对当前窗口、主页和宿主地址后返回所选路径。项目保存、授权、会话执行目录与 Web 共用宿主服务。
 
@@ -22,11 +24,11 @@ npm run dev:desktop
 
 该命令按 package manifest 计算 GUI 的 workspace 依赖闭包，覆盖源码中的构建期 workspace 依赖；源码、资源、构建配置、构建脚本或已安装依赖变化时按序重建，未变化时复用现有 dist。指纹覆盖根 manifest/锁文件、构建脚本、TS/TSX、CSS 和资源；构建记录同时保存输入与实际输出摘要。`npm run dev:desktop -- --build-only` 只建立该记录，不启动应用。已有模型数据不会被自动刷新；需要更新模型目录时显式运行 `npm run sync:pi-models`。可用 `node scripts/build-workspace-dependencies.mjs @amazme/gui --plan` 查看构建顺序。
 
-界面语言仍读取 `AMAZME_CODING_AGENT_DIR` 或 `~/.amazme/agent/settings.json`。桌面包自己解析这个路径，不加载旧宿主。
+界面语言由共享 Host 的产品设置提供；Host 不可用时，桌面才读取 agent/settings.json 的旧语言兜底。桌面不加载旧宿主。
 
-菜单和错误框优先使用当前页面的 `lang`，页面未就绪、已崩溃或语言读取超时时使用同一 profile 的全局 `locale` 设置（与 `SettingsManager.getLocalePreference` 一致，不读项目覆盖）；`auto` 才跟随系统。程序生成的英文错误留在有界详情中，摘要按错误类型、退出码和超时参数本地化。
+菜单和错误框优先使用当前页面的 `lang`，页面未就绪时从共享 Host 的产品设置读取 `locale`，Host 不可用才读取旧 agent/settings.json 的语言兜底；`auto` 才跟随系统。程序生成的英文错误留在有界详情中，摘要按错误类型、退出码和超时参数本地化。
 
-桌面拥有的 Python 后端在显式退出时先阻止新投递、取消活动工作，再按进程租约和注册信息回收 Supervisor、Worker、终端、插件、MCP 及工具。关闭窗口继续运行不会取消任务。活动状态来自 `/control/desktop/activity` 对现有会话、投递和监督状态的只读聚合，查询失败不按空闲处理。控制关闭完成后还等待 Host 自然退出；清理失败或超时会保留应用供重试，不自动强杀或宣称成功。子进程没有父进程 stdin 管道。
+共享 Host 在「停止后台并退出」时阻止新投递、取消活动工作，并按进程租约回收 Supervisor、Worker、终端、插件、MCP 及工具。普通桌面退出和页面崩溃不触发这个全局操作。活动检查只描述业务任务，不推断是否存在其他 Web 窗口。Host 的独占锁和 Python 本地连接入口协调所有启动者。
 
 壳的 typecheck 和构建解析 `@amazme/web/locale`、`@amazme/web/strings` 与 `@amazme/web/errors` 的 dist；这些轻量入口不加载 React 或 DOM。单独启动这个包之前，Web 的 dist 要已经在。桌面运行时不再依赖 `@amazme/coding-agent`。
 
@@ -44,7 +46,7 @@ Electron 是窗口壳。正式安装包带上 Python 后端后才打开页面。
 
 安装前宿主通过仅主进程持有的能力令牌冻结新任务入口，并检查活动/排队/后台任务、终端与认证操作。忙碌时推迟安装。helper 使用单实例锁，等待正常宿主关闭和旧应用 PID 退出后才在同卷重命名替换；新桌面与宿主连接成功才确认健康。旧应用保留在相邻隐藏更新目录的 `Previous.app`，启动失败时尝试恢复；若新进程不能安全停止，保留两份副本并记录 `recovery-required`，不强行覆盖运行中的应用。二进制回滚不回滚用户数据，后续数据迁移必须保持回退兼容。
 
-`AMAZME_GUI_USER_DATA_DIR` 可选定独立桌面 profile；更新重启沿用原 profile 和宿主数据目录。真实验收使用隔离目录，绝不替换用户正在使用的应用。
+`AMAZME_GUI_USER_DATA_DIR` 可选定独立桌面壳目录；`AMAZME_PROFILE` 选定业务 profile。更新重启沿用两者以及 `AMAZME_HOME`。真实验收使用隔离目录，绝不替换用户正在使用的应用。
 
 更新锁先完整写入并 fsync 所有者记录，再原子获取；重复启动不会截断已有锁。普通启动遇到活跃或未知锁立即退出，不留下占用应用 PID 的模态框。持锁 helper 崩溃后，启动进程取得 Electron 单例，再检查私有锁中的完整 job 快照、所有者 PID 已退出、当前应用的 Apple 信任/发布者/版本和旧版本 hash，才恢复启动并清理已知失效锁；未知记录保留，恢复不会自动继续安装或移动应用。恢复元数据不依赖准备目录存在。GUI 退出仅删除未交接的暂存；任何锁、旧应用副本或已开始的事务日志都会保留该目录，由安装/恢复流程接管清理。
 

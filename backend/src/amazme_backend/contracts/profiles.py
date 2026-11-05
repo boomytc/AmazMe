@@ -25,7 +25,6 @@ class ProfileConfig(Model):
     format: Literal[2] = 2
     profile_id: str
     workspace: str
-    resources: str
     user_resources: str = ""
     account_profile: str = ""
     provider: ProviderConfig
@@ -34,7 +33,7 @@ class ProfileConfig(Model):
 
     @model_validator(mode="before")
     @classmethod
-    def discard_retired_testing_flag(cls, value: object) -> object:
+    def discard_retired_fields(cls, value: object) -> object:
         if isinstance(value, dict):
-            return {key: item for key, item in cast(dict[object, object], value).items() if key != "testing"}
+            return {key: item for key, item in cast(dict[object, object], value).items() if key not in {"testing", "resources"}}
         return value

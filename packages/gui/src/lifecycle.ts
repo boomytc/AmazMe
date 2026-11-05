@@ -3,7 +3,7 @@ export type CloseWindowPreference = "background" | "quit";
 export interface DesktopPreferences {
 	readonly closeWindow: CloseWindowPreference;
 	readonly closeWindowPrompt: boolean;
-	/** With nothing running there is nothing to keep alive: closing quits directly. */
+	/** Closing an idle window quits the desktop without a prompt. */
 	readonly idleQuit: boolean;
 }
 
@@ -18,7 +18,7 @@ export interface CloseConfirmation {
 	readonly remember: boolean;
 }
 
-export type LifecyclePhase = "open" | "checking" | "asking-close" | "asking-quit" | "closing" | "quitting" | "failed" | "exited";
+export type LifecyclePhase = "open" | "checking" | "asking-close" | "closing" | "quitting" | "failed" | "exited";
 export type LifecycleError = "activity" | "preferences" | "cleanup";
 
 export interface LifecyclePorts<Window> {
@@ -26,7 +26,6 @@ export interface LifecyclePorts<Window> {
 	readActivity(): Promise<{ readonly active: boolean }>;
 	savePreferences(value: DesktopPreferences): Promise<void>;
 	confirmClose(target: Window): Promise<CloseConfirmation>;
-	confirmQuit(): Promise<boolean>;
 	reportError(kind: LifecycleError): Promise<boolean>;
 	hideWindow(target: Window): void;
 	applicationWillQuit(): void;
@@ -109,8 +108,7 @@ export function createDesktopLifecycle<Window>(ports: LifecyclePorts<Window>): D
 		let action = preferences.closeWindow;
 		let remember = false;
 		if (preferences.idleQuit) {
-			// Nothing to keep alive: closing an idle window is a normal quit. If the activity
-			// check itself fails, fall through to the confirmation/preference instead of guessing.
+			// If the activity check fails, use the confirmation/preference instead of guessing.
 			let idle = false;
 			try {
 				idle = !(await ports.readActivity()).active;
@@ -151,22 +149,7 @@ export function createDesktopLifecycle<Window>(ports: LifecyclePorts<Window>): D
 		return "done";
 	};
 
-	const quit = async (): Promise<"done" | Intent> => {
-		if (cleanupStarted) return "cleanup";
-		phase = "checking";
-		try {
-			if ((await ports.readActivity()).active) {
-				phase = "asking-quit";
-				if (!await ports.confirmQuit()) {
-					phase = "open";
-					return "done";
-				}
-			}
-		} catch {
-			return (await report("activity")) === "retry" ? "quit" : "done";
-		}
-		return "cleanup";
-	};
+	const quit = async (): Promise<"done" | Intent> => "cleanup";
 
 	const start = (initial: Intent, closeTarget?: Window): Promise<void> => {
 		if (operation !== undefined) return operation;
@@ -199,7 +182,7 @@ export function createDesktopLifecycle<Window>(ports: LifecyclePorts<Window>): D
 		requestQuit() {
 			if (phase === "exited") return Promise.resolve();
 			if (operation !== undefined) {
-				if (phase !== "asking-quit" && pending !== "cleanup") pending = "quit";
+				if (pending !== "cleanup") pending = "quit";
 				return operation;
 			}
 			return start("quit");

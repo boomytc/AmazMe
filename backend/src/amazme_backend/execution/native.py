@@ -90,7 +90,7 @@ class LocalReport(Model):
 
 def tool_environment() -> dict[str, str]:
     # Tool discovery is allowed; provider/control capabilities are never inherited.
-    keys = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM")
+    keys = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM", "AMAZME_NODE")
     env = {key: os.environ[key] for key in keys if key in os.environ}
     env.setdefault("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
     env.setdefault("HOME", pwd.getpwuid(os.getuid()).pw_dir)

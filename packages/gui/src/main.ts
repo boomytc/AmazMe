@@ -1,9 +1,7 @@
-import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { PAGE_DIRECTORY } from "@amazme/web/assets";
 import {
 	app,
@@ -19,14 +17,15 @@ import {
 	type MessageBoxOptions,
 } from "electron";
 import { desktopLocale, readDesktopDocumentLanguage, readDesktopLocalePreference } from "./locale.ts";
-import { closeDialogCopy, hostFailureCopy, lifecycleErrorCopy, quitDialogCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
-import { createHostSupervisor, spawnNodeChild, type HostStartupFailure, type HostSupervisor } from "./host.ts";
+import { closeDialogCopy, hostFailureCopy, lifecycleErrorCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
+import { createHostConnection, type HostStartupFailure, type HostSupervisor } from "./host.ts";
 import { PythonDesktopApi } from "./desktop-api.ts";
 import { createDesktopLifecycle, type DesktopLifecycle, type LifecycleError } from "./lifecycle.ts";
 import { hostWorkingDirectory } from "./launch.ts";
 import { applicationMenuTemplate, editMenuTemplate } from "./menu.ts";
 import { isAllowedNavigation, isExternalUrl, isHostPageDocument } from "./navigation.ts";
 import { createShellController, type ShellController } from "./shell.ts";
+import { desktopDataDirectory } from "./data-directory.ts";
 import { withWindowTarget, type WindowAddress } from "./deep-link.ts";
 import { attentionOnTitle } from "./title.ts";
 import { trayMenuTemplate } from "./tray.ts";
@@ -36,28 +35,22 @@ import { markUpdatedDesktopHealthy } from "./updates/update-helper.ts";
 import { mayStartInstalledApp, shouldStartDesktopUpdates } from "./updates/update-launch.ts";
 import { recoverStaleUpdateLock, updateLockState } from "./updates/update-lock.ts";
 import {
-	desktopPythonBootPlan,
-	initialPythonProvider,
 	parsePythonUpdateRecord,
 	pythonPrepareUpdateRequest,
-	pythonShutdownRequest,
 	pythonUpdateStatePath,
 	readControlToken,
 	requirePythonBackend,
 	resolvePythonBackend,
 	settlePythonBackendUpdate,
-	PYTHON_SHUTDOWN_TIMEOUT_MS,
 } from "./python-backend.ts";
-
-const execFileAsync = promisify(execFile);
 
 const APP_NAME = "AmazMe";
 const APP_ICON = join(PAGE_DIRECTORY, "app-icon.png");
 const TRAY_ICON = fileURLToPath(new URL("../assets/tray-icon.png", import.meta.url));
 app.setName(APP_NAME);
 const SMOKE = process.env.AMAZME_GUI_SMOKE === "1";
-if (process.env.AMAZME_GUI_USER_DATA_DIR && isAbsolute(process.env.AMAZME_GUI_USER_DATA_DIR)) app.setPath("userData", process.env.AMAZME_GUI_USER_DATA_DIR);
-if (SMOKE && process.env.AMAZME_GUI_SMOKE_DATA_DIR) app.setPath("userData", process.env.AMAZME_GUI_SMOKE_DATA_DIR);
+app.setPath("userData", desktopDataDirectory(app.getPath("userData"), process.env));
+if (SMOKE && !process.env.AMAZME_PROFILE && !process.env.AMAZME_CODING_AGENT_DIR && !process.env.AMAZME_HOME) throw new Error("desktop smoke requires an isolated profile");
 
 const SMOKE_EXPRESSION = `({
 	title: document.title,
@@ -92,20 +85,7 @@ let desktopApi: PythonDesktopApi;
 let updates: ReturnType<typeof createDesktopUpdates> | undefined;
 let pythonProfile = "";
 let pythonWebToken = "";
-
-async function stopPythonBackend(): Promise<void> {
-	const ready = host?.pythonReady();
-	if (ready === undefined || pythonProfile.length === 0 || pythonWebToken.length === 0) return;
-	const request = pythonShutdownRequest(ready, readControlToken(pythonProfile), pythonWebToken);
-	const response = await fetch(request.url, {
-		method: "POST", redirect: "error", headers: request.headers, body: request.body, signal: AbortSignal.timeout(request.timeoutMs),
-	});
-	if (!response.ok) {
-		await response.body?.cancel();
-		throw new Error(`desktop python shutdown failed (${String(response.status)})`);
-	}
-	await response.body?.cancel();
-}
+let selectedWorkspace = "primary";
 
 function pythonUpdateFile(): string {
 	return pythonUpdateStatePath(app.getPath("userData"));
@@ -195,16 +175,35 @@ function readinessTimeout(): number | undefined {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+let stoppingBackend = false;
+async function stopBackendAndQuit(): Promise<void> {
+    if (stoppingBackend || showingDialog || lifecycle.quitting) return;
+    stoppingBackend = true;
+    try {
+        const locale = await currentLocale();
+        const answer = await ask({ type: "question", message: translate(locale, "desktop.stop.title"),
+            detail: translate(locale, "desktop.stop.detail"),
+            buttons: [translate(locale, "desktop.dialog.cancel"), translate(locale, "desktop.stop.action")], defaultId: 0, cancelId: 0 });
+        if (answer !== 1) return;
+        await shutdownHost();
+        await lifecycle.quitImmediately();
+    } catch {
+        const locale = await currentLocale();
+        await ask({ type: "error", message: translate(locale, "desktop.stop.failed"), buttons: [translate(locale, "modal.close")] });
+    }
+    finally { stoppingBackend = false; }
+}
+
 function shutdownHost(): Promise<void> {
 	if (host === undefined) return Promise.resolve();
-	return host.shutdown({ ...(host.pythonReady() === undefined ? {} : { request: stopPythonBackend }), force: false });
+	return host.shutdown();
 }
 
 async function currentLocale() {
 	const preferred = app.getPreferredSystemLanguages();
 	const system = app.getLocale();
 	const languages = preferred.length > 0 ? preferred : system.length > 0 ? [system] : [];
-	const preference = await readDesktopLocalePreference(hostWorkingDirectory(process.env, process.cwd()), process.env);
+	const preference = await desktopApi.localePreference().catch(() => readDesktopLocalePreference(hostWorkingDirectory(process.env, process.cwd()), process.env));
 	const current = liveWindow();
 	let documentLanguage: unknown;
 	// Constant read from the owned page, not a new renderer capability or arbitrary IPC execution.
@@ -253,9 +252,10 @@ async function refreshApplicationMenu(): Promise<void> {
 		Menu.setApplicationMenu(
 			Menu.buildFromTemplate(
 				applicationMenuTemplate(process.platform, locale, {
+					stop: () => { void stopBackendAndQuit(); },
 					newSession: () => send("new-session"),
 					newWindow: () => {
-						if (hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: "primary", fresh: true }));
+						if (hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: selectedWorkspace, fresh: true }));
 					},
 					settings: () => send("settings"),
 					...(updates === undefined ? {} : { updates: () => { void updates?.show(); } }),
@@ -283,6 +283,7 @@ async function refreshTrayMenu(): Promise<void> {
 		const pending = totalPendingApprovals();
 		tray.setToolTip(pending > 0 ? `${APP_NAME} · ${pending}` : APP_NAME);
 		tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate(locale, {
+        stop: () => { void stopBackendAndQuit(); },
 			show: showWindow,
 			quit: () => { void requestUserQuit(); },
 		}, pending)));
@@ -377,15 +378,11 @@ function logHostFailure(failure: HostFailure): void {
 	console.error(`desktop host failed (${failure.kind}): ${failure.message}`);
 }
 
-/** The host is already unusable. Shut it down, then leave with a failure status. */
+/** Leaving a failed desktop never stops a shared Host. */
 function leaveAfterHostFailure(): void {
-	if (notices.quitting) return;
-	notices.applicationWillQuit();
-	void shutdownHost().catch((error: unknown) => {
-		console.error(`desktop failure cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
-	}).finally(() => {
-		app.exit(1);
-	});
+    if (notices.quitting) return;
+    notices.applicationWillQuit();
+    app.exit(1);
 }
 
 function beginHostDialog(failure: HostFailure): void {
@@ -485,16 +482,7 @@ lifecycle = createDesktopLifecycle<BrowserWindow>({
 			remember: result.response !== 2 && result.checkboxChecked,
 		};
 	},
-	confirmQuit: async () => {
-		const result = await lifecycleBox(async () => {
-			const copy = quitDialogCopy(await currentLocale());
-			return {
-				type: "question", title: copy.title, message: copy.message, detail: copy.detail,
-				buttons: [...copy.buttons], defaultId: 0, cancelId: 0, noLink: true,
-			};
-		}, 0);
-		return result.response === 1;
-	},
+
 	reportError: async (kind: LifecycleError) => {
 		const result = await lifecycleBox(async () => {
 			const copy = lifecycleErrorCopy(await currentLocale(), kind);
@@ -512,7 +500,6 @@ lifecycle = createDesktopLifecycle<BrowserWindow>({
 	},
 	applicationWillQuit: () => notices.applicationWillQuit(),
 	cleanup: async () => {
-		await shutdownHost();
 		await updates?.dispose();
 	},
 	releaseQuit: () => app.quit(),
@@ -678,53 +665,21 @@ async function boot(): Promise<void> {
 	app.dock?.setIcon(APP_ICON);
 	const pythonExecutable = requirePythonBackend(resolvePythonBackend(process.env, process.resourcesPath));
 	const cwd = hostWorkingDirectory(process.env, process.cwd());
-	pythonProfile = join(app.getPath("userData"), "python-profile");
-	const provider = join(app.getPath("userData"), "initial-provider.json");
-	if (!existsSync(provider)) {
-		writeFileSync(provider, JSON.stringify(initialPythonProvider(SMOKE)));
-	}
-	const plan = desktopPythonBootPlan({
-		executable: pythonExecutable,
-		profile: pythonProfile,
-		workspace: cwd,
-		providerConfig: provider,
-		profileExists: existsSync(join(pythonProfile, "config.json")),
-		cwd,
-		env: process.env,
-	});
-	const missingPython = plan.entries.find((entry) => !existsSync(entry));
-	if (missingPython !== undefined) throw new Error(`desktop python backend is missing: ${missingPython}`);
-	for (const step of plan.preflight) {
-		await execFileAsync(plan.executable, [...step.args], { cwd: plan.cwd, env: plan.env });
-	}
-	pythonWebToken = readFileSync(join(pythonProfile, "web.token"), "utf8").trim();
-	if (pythonWebToken.length === 0 || pythonWebToken === readControlToken(pythonProfile)) {
-		throw new Error("desktop python web token is missing or matches the control token");
-	}
-	const launch = { executable: plan.executable, args: plan.serveArgs, cwd: plan.cwd, env: plan.env, entries: plan.entries };
-	const timeout = readinessTimeout();
-	host = createHostSupervisor({
-		spawnHost: () => {
-			const child = spawnNodeChild({ executable: launch.executable, args: launch.args, cwd: launch.cwd, env: launch.env });
-			if (child.pid !== undefined) process.stdout.write(`desktop host pid: ${child.pid}\n`);
-			return child;
-		},
-		...(timeout === undefined ? {} : { readinessTimeoutMs: timeout }),
-		shutdownTimeoutMs: PYTHON_SHUTDOWN_TIMEOUT_MS,
-		log: (chunk) => {
-			process.stderr.write(chunk);
-		},
-		onStartupFailure: (failure) => {
-			startupFailure = failure;
-		},
-		onUnexpectedExit: (detail) => {
-			notices.hostExited(detail);
-		},
-	});
-	const pageUrl = await host.start();
+    host = createHostConnection({
+        executable: pythonExecutable, cwd, env: process.env,
+        ...(readinessTimeout() === undefined ? {} : { readinessTimeoutMs: readinessTimeout() }),
+        onStartupFailure: failure => { startupFailure = failure; },
+    });
+    const pageUrl = await host.start();
+    const connection = host.connection();
+    if (connection === undefined) throw new Error("local_host_unavailable");
+    pythonProfile = connection.profilePath;
+    pythonWebToken = connection.webToken;
+    selectedWorkspace = connection.workspace;
+    if (pythonWebToken === readControlToken(pythonProfile)) throw new Error("desktop control token is not distinct");
 	await settlePythonUpdate();
 	const namedSession = deepLinkSession?.trim();
-	await openWindow(pageUrl, pythonWindow(namedSession ? { sessionId: namedSession, workspace: "primary" } : { workspace: "primary" }));
+	await openWindow(pageUrl, pythonWindow(namedSession ? { sessionId: namedSession, workspace: selectedWorkspace } : { workspace: selectedWorkspace }));
 	const installedRelease = app.isPackaged && existsSync(join(process.resourcesPath, "release-manifest.json"));
 	if (!SMOKE && !notices.quitting && shouldStartDesktopUpdates(installedRelease, app.getVersion())) {
 		const target = dirname(dirname(dirname(process.execPath)));
@@ -750,7 +705,7 @@ async function boot(): Promise<void> {
 				} finally { showingDialog = false; }
 			},
 			prepareHost: prepareHostUpdate,
-			quit: async () => { requestQuit(); },
+			quit: async () => { await shutdownHost(); await lifecycle.quitImmediately(); },
 			resumeHost: async () => { await settlePythonUpdate(); },
 		});
 		await updates.start();
@@ -773,13 +728,13 @@ async function initializeDesktop(): Promise<void> {
 		const fresh = argv.some((arg) => arg === "--amazme-new-window");
 		if (fresh && hostPageUrl !== undefined) {
 			process.stdout.write("desktop window requested\n");
-			void openWindow(hostPageUrl, pythonWindow({ workspace: "primary", fresh: true }));
+			void openWindow(hostPageUrl, pythonWindow({ workspace: selectedWorkspace, fresh: true }));
 			return;
 		}
 		showWindow();
 	});
 	app.on("activate", () => {
-		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: "primary" }));
+		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: selectedWorkspace }));
 		else showWindow();
 	});
 	app.on("window-all-closed", () => {

@@ -19,6 +19,7 @@ def loopback_listener(port: int) -> socket.socket:
 
 async def serve(profile: Profile, port: int = 0) -> None:
     with lock(profile.path / "host.lock"):
+        (profile.path / "ready.json").unlink(missing_ok=True)
         instance = secrets.token_hex(16)
         with ProcessReservation(profile.path, "host", instance) as reservation:
             descriptor = os.dup(reservation.fd)
@@ -58,4 +59,7 @@ async def serve(profile: Profile, port: int = 0) -> None:
                 finally:
                     watcher.cancel()
         finally:
-            await owner.close()
+            try:
+                await owner.close()
+            finally:
+                (profile.path / "ready.json").unlink(missing_ok=True)

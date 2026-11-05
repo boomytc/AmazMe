@@ -24,13 +24,15 @@ Python CLI 用 `client questions --session ID` 查看，用 `client answer --ses
 动态目录刷新及媒体回传已有定向检查；HTTP/OAuth 等其他 MCP 传输不属于当前 stdio 主路径。
 普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
 关闭页面不会停止终端，使用「关闭终端」或停止后端结束它。监督器失联后不自动重启命令。
-终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 装载这份页面；窗口关闭按桌面偏好处理，退出会停止它拥有的后端。网页、print/JSON CLI、`--mode rpc` 和 Python SDK 在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
+终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 装载这份页面；窗口关闭按桌面偏好处理，普通退出只关闭桌面，显式「停止后台并退出」才停止共享后端。网页、print/JSON CLI、`--mode rpc` 和 Python SDK 在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
 `amazme-backend client submit` 返回终态或待审批项，待审批退出码为 2，并给出原提案编号；退出释放本次 attachment。
 `client request --session ID --request-id ID` 查询原回执。`client decide` 必须单独给出「批准」或「拒绝」；请求审批还需 `--approval-id ID`，MCP 则指向原调用。
 重试只核对原提案，不能批准后续工具；已经结算的决定只返回原请求状态。提交文本里的「批准」不是决定。
 模型选择请求不携带密钥。更换或清除密钥走单独入口；过期代际不会覆盖新密钥，响应里也不出现密钥。
 内置供应商 Command Code 共用一个 API key，默认使用「自动（按模型）」协议：依据公开目录的 `supported_endpoints`，Claude 走 Anthropic Messages、GPT 优先走 OpenAI Responses，其余兼容模型走 Chat Completions。配置、切换默认模型及重启均保留自动模式；如需固定协议，可在供应商配置中修改。目录随程序提供，启动不联网刷新；维护时运行 `npm run sync:command-code-models`，来源与接口说明见 [Command Code Provider](https://commandcode.ai/docs/provider)。目录未提供的价格保持未知。
 MCP 服务同样归属会话；停止服务后，未取得结果的调用保持 `unknown`，不能自动重试。
+
+本地 Web、Desktop 和 CLI 共用 `connect --workspace /absolute/project`。它在规范 profile 的启动锁内完成初始化、探活和 detached 启动，再校验 Host 能力、身份与工作区。普通客户端退出不会关闭 Host。默认目录和旧数据迁移见[根说明](../README.md#统一数据目录与迁移)。
 
 首次启动使用新的 profile、实际项目目录和权限为 0600 的供应商 JSON（`provider`、`model`、
 `api_key`）；不要把该 JSON 放入仓库。`init` 复制配置后，原临时文件可删除。

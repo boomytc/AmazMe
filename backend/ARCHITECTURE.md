@@ -2,6 +2,8 @@
 
 后端保持一个 `amazme-backend` 分发包。执行契约见[本机方案](../docs/python-backend-plan.md)，客户端职责见[依赖说明](../docs/python-backend-ts-deps.md)。业务状态与持久化由 Python 拥有。
 
+`profiles.locations` 统一解析产品根、用户资源和默认 profile。`bootstrap.local` 是所有本机客户端唯一的初始化与 start-or-attach 入口，Host 独占同一规范目录并独立于客户端寿命。本地连接入口在目标构建上完成冻结校验与激活，客户端不会把冻结状态误判为另起 Host 的理由。`bootstrap.migration` 在停写与租约退出后整体迁移业务树，保留稳定身份并重定位内部路径；事务记录未完成时禁止启动，成功后清除暂存旧目录，不保留备份。运行资源由当前后端定位，不存入产品 profile。
+
 模型目录读取和价格快照属于 `ai.pricing`；已保存单价的纯计算属于 `ai.usage`。会话统计由 `sessions.policy.usage` 对完整持久记录汇总，客户端只呈现结果。该纯闭包由结构检查约束，不能经目录读取进入文件 I/O。
 
 ## 模块

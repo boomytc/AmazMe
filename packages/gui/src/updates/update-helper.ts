@@ -61,7 +61,7 @@ async function main(directory: string): Promise<void> {
 		// concluding that a real second instance is running. Never move a live, booted instance.
 		await waitFor(async () => { try { await noOtherInstance(job.target, 0); return true; } catch { return false; } }, 5000);
 		const launchEnv: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: process.env.HOME };
-		for (const key of ["AMAZME_CODING_AGENT_DIR", "AMAZME_SERVER_DIR", "AMAZME_GUI_CWD", "AMAZME_AGENTS_HOME", "AMAZME_GUI_USER_DATA_DIR"]) {
+		for (const key of ["AMAZME_HOME", "AMAZME_PROFILE", "AMAZME_CODING_AGENT_DIR", "AMAZME_SERVER_DIR", "AMAZME_GUI_CWD", "AMAZME_AGENTS_HOME", "AMAZME_GUI_USER_DATA_DIR"]) {
 			if (process.env[key]) launchEnv[key] = process.env[key];
 		}
 		const executable = join(job.target, "Contents", "MacOS", "AmazMe");

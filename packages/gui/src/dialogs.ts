@@ -98,15 +98,6 @@ export function closeDialogCopy(locale: Locale): CloseDialogCopy {
 	};
 }
 
-export function quitDialogCopy(locale: Locale): QuitDialogCopy {
-	return {
-		title: translate(locale, "desktop.close.tasksTitle"),
-		message: translate(locale, "desktop.close.tasksTitle"),
-		detail: translate(locale, "desktop.quit.detail"),
-		buttons: [translate(locale, "desktop.dialog.cancel"), translate(locale, "desktop.close.stopQuit")],
-	};
-}
-
 export function lifecycleErrorCopy(locale: Locale, kind: "activity" | "preferences" | "cleanup"): QuitDialogCopy {
 	const prefix = kind === "activity" ? "activity" : kind === "preferences" ? "preferences" : "cleanup";
 	return {

@@ -1,16 +1,7 @@
-import { spawn, type ChildProcessByStdio } from "node:child_process";
-import type { Readable } from "node:stream";
-import type { PythonReady } from "./python-backend.ts";
-import { createReadinessParser } from "./readiness.ts";
-
-const DEFAULT_READINESS_TIMEOUT_MS = 60_000;
-const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
-
-/**
- * Stdout and stderr retained for a failure dialog, including output after the launch line.
- * Older bytes are dropped. The dialog then shows the last few lines of this buffer.
- */
-export const MAX_HOST_OUTPUT_CHARS = 32_768;
+import { execFile } from "node:child_process";
+import { isAbsolute } from "node:path";
+import { promisify } from "node:util";
+import { parsePythonReadyLine, type PythonReady } from "./python-backend.ts";
 
 /** Exit data is diagnostic; future signal names remain valid. */
 export interface HostExitDetail {
@@ -34,258 +25,79 @@ export type HostStartupFailure =
 	  }
 	| ({ readonly kind: "exit-before-ready"; readonly message: string } & HostExitDetail);
 
-/** Child the supervisor owns. Tests substitute a fake; the app uses a Node process. */
-export interface HostChild {
-	readonly pid?: number | undefined;
-	readonly stdout: { onData(listener: (chunk: string) => void): () => void };
-	readonly stderr: { onData(listener: (chunk: string) => void): () => void };
-	onExit(listener: (code: number | null, signal: NodeJS.Signals | null) => void): () => void;
-	onError(listener: (error: Error) => void): () => void;
-	kill(signal: "SIGTERM" | "SIGKILL"): void;
-}
 
-export interface HostSupervisorOptions {
-	readonly spawnHost: () => HostChild;
-	readonly readinessTimeoutMs?: number;
-	readonly shutdownTimeoutMs?: number;
-	readonly log?: (chunk: string) => void;
-	/** Structured cause when `start` rejects: spawn error, exit before ready, timeout, or bad output. */
-	readonly onStartupFailure?: (failure: HostStartupFailure) => void;
-	/** The child was ready, then exited while shutdown had not started. */
-	readonly onUnexpectedExit?: (detail: HostExitDetail) => void;
-}
-
-export interface HostShutdownOptions {
-	readonly request?: () => Promise<void>;
-	readonly force?: boolean;
+interface LocalConnection {
+    readonly ready: PythonReady;
+    readonly profilePath: string;
+    readonly webToken: string;
+    readonly workspace: string;
 }
 
 export interface HostSupervisor {
-	/** Start once. Later calls join the same attempt. */
-	start(): Promise<string>;
-	/** Stop once. A normal desktop quit may refuse escalation and surface a retryable timeout. */
-	shutdown(options?: HostShutdownOptions): Promise<void>;
-	/** Bounded tail of stdout and stderr. Still grows after the launch line, then drops the head. */
-	tail(): string;
-	/** Present after the packaged Python backend prints its readiness line. */
-	pythonReady(): PythonReady | undefined;
+    start(): Promise<string>;
+    shutdown(): Promise<void>;
+    tail(): string;
+    pythonReady(): PythonReady | undefined;
+    connection(): LocalConnection | undefined;
 }
 
-interface NodeChildOptions {
-	readonly executable: string;
-	readonly args: readonly string[];
-	readonly cwd: string;
-	readonly env: NodeJS.ProcessEnv;
+const run = promisify(execFile);
+
+function failureCode(error: unknown): string {
+    if (typeof error === "object" && error !== null && "stderr" in error && typeof error.stderr === "string") {
+        return /^\s*\{"code":\s*"([a-z][a-z0-9_]{0,127})"\}\s*$/u.exec(error.stderr)?.[1] ?? "local_host_unavailable";
+    }
+    return "local_host_unavailable";
 }
 
-/** Spawn the packaged backend. Stdin stays closed; shutdown uses a signal, not a parent pipe. */
-export function spawnNodeChild(options: NodeChildOptions): HostChild {
-	const child = spawn(options.executable, [...options.args], {
-		cwd: options.cwd,
-		env: options.env,
-		windowsHide: true,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-	return nodeChildAdapter(child);
-}
-
-function streamAdapter(stream: Readable): HostChild["stdout"] {
-	return {
-		onData(listener) {
-			const accept = (chunk: string | Buffer): void => {
-				listener(chunk.toString());
-			};
-			stream.on("data", accept);
-			return () => {
-				stream.off("data", accept);
-			};
-		},
-	};
-}
-
-function terminate(child: ChildProcessByStdio<null, Readable, Readable>, signal: "SIGTERM" | "SIGKILL"): void {
-	if (child.pid === undefined) return;
-	// Escalate only this child: descendants can have been adopted by a replacement/shared server.
-	if (process.platform === "win32") {
-		spawn("taskkill", ["/pid", String(child.pid), "/F"], { stdio: "ignore", windowsHide: true });
-		return;
-	}
-	child.kill(signal);
-}
-
-function nodeChildAdapter(child: ChildProcessByStdio<null, Readable, Readable>): HostChild {
-	return {
-		pid: child.pid,
-		stdout: streamAdapter(child.stdout),
-		stderr: streamAdapter(child.stderr),
-		onExit(listener) {
-			child.on("exit", listener);
-			return () => {
-				child.off("exit", listener);
-			};
-		},
-		onError(listener) {
-			child.on("error", listener);
-			return () => {
-				child.off("error", listener);
-			};
-		},
-		kill(signal) {
-			terminate(child, signal);
-		},
-	};
-}
-
-/**
- * Own one web-host process: resolve when its launch line arrives, and keep reading output so the
- * pipe cannot stall the host after that.
- */
-export function createHostSupervisor(options: HostSupervisorOptions): HostSupervisor {
-	const readinessTimeoutMs = options.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
-	const shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
-	let child: HostChild | undefined;
-	let startPromise: Promise<string> | undefined;
-	let shutdownPromise: Promise<void> | undefined;
-	let exited: Promise<void> | undefined;
-	let exitResolve: (() => void) | undefined;
-	let ready = false;
-	let shuttingDown = false;
-	let processExited = false;
-	let output = "";
-	let readinessTimer: ReturnType<typeof setTimeout> | undefined;
-	const parser = createReadinessParser();
-
-	const note = (chunk: string): void => {
-		output = `${output}${chunk}`.slice(-MAX_HOST_OUTPUT_CHARS);
-		options.log?.(chunk);
-	};
-
-	const start = (): Promise<string> => {
-		if (startPromise !== undefined) return startPromise;
-		if (shutdownPromise !== undefined) {
-			return Promise.reject(new Error("desktop host cannot start after shutdown"));
-		}
-		startPromise = new Promise<string>((resolve, reject) => {
-			const spawned = options.spawnHost();
-			child = spawned;
-			exited = new Promise<void>((accept) => {
-				exitResolve = accept;
-			});
-			let settled = false;
-
-			const stopTimer = (): void => {
-				if (readinessTimer === undefined) return;
-				clearTimeout(readinessTimer);
-				readinessTimer = undefined;
-			};
-			const fail = (failure: HostStartupFailure): void => {
-				if (settled) return;
-				settled = true;
-				stopTimer();
-				options.onStartupFailure?.(failure);
-				const diagnostic = failure.tail === "" ? "" : `\n${failure.tail}`;
-				reject(new Error(`${failure.message}${diagnostic}`));
-			};
-
-			readinessTimer = setTimeout(() => {
-				fail({
-					kind: "readiness-timeout",
-					timeoutMs: readinessTimeoutMs,
-					message: `desktop host readiness timed out after ${String(readinessTimeoutMs)}ms`,
-					tail: output,
-				});
-				spawned.kill("SIGTERM");
-			}, readinessTimeoutMs);
-
-			spawned.stdout.onData((chunk) => {
-				note(chunk);
-				if (settled) return;
-				try {
-					const url = parser.push(chunk);
-					if (url === undefined) return;
-					settled = true;
-					ready = true;
-					stopTimer();
-					resolve(url);
-				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
-					fail({ kind: "invalid-output", message, tail: output });
-					spawned.kill("SIGTERM");
-				}
-			});
-			spawned.stderr.onData(note);
-			spawned.onError((error) => {
-				fail({
-					kind: "spawn-error",
-					message: `desktop host failed to spawn: ${error.message}`,
-					tail: output,
-				});
-				exitResolve?.();
-			});
-			spawned.onExit((code, signal) => {
-				processExited = true;
-				exitResolve?.();
-				if (ready) {
-					if (!shuttingDown) options.onUnexpectedExit?.({ code, signal, tail: output });
-					return;
-				}
-				try {
-					const url = parser.finalize();
-					if (settled) return;
-					settled = true;
-					ready = true;
-					stopTimer();
-					resolve(url);
-				} catch {
-					fail({
-						kind: "exit-before-ready",
-						message: `desktop host exited before readiness (code ${String(code)}, signal ${String(signal)})`,
-						code,
-						signal,
-						tail: output,
-					});
-				}
-			});
-		});
-		return startPromise;
-	};
-
-	const shutdown = async (shutdownOptions: HostShutdownOptions = {}): Promise<void> => {
-		shutdownPromise ??= (async () => {
-			const spawned = child;
-			if (spawned === undefined || processExited) return;
-			shuttingDown = true;
-			if (readinessTimer !== undefined) {
-				clearTimeout(readinessTimer);
-				readinessTimer = undefined;
-			}
-			if (shutdownOptions.request !== undefined) await shutdownOptions.request();
-			else spawned.kill("SIGTERM");
-			if (processExited) return;
-			const closed = exited ?? Promise.resolve();
-			let timer: ReturnType<typeof setTimeout> | undefined;
-			const outcome = await Promise.race([
-				closed.then(() => "closed" as const),
-				new Promise<"timeout">((accept) => {
-					timer = setTimeout(() => {
-						accept("timeout");
-					}, shutdownTimeoutMs);
-				}),
-			]);
-			if (timer !== undefined) clearTimeout(timer);
-			if (outcome === "timeout") {
-				if (shutdownOptions.force === false) throw new Error(`desktop host shutdown timed out after ${String(shutdownTimeoutMs)}ms`);
-				spawned.kill("SIGKILL");
-				await closed;
-			}
-		})();
-		try {
-			await shutdownPromise;
-		} catch (error) {
-			shutdownPromise = undefined;
-			throw error;
-		}
-	};
-
-	return { start, shutdown, tail: () => output, pythonReady: () => parser.pythonReady() };
+/** Only the short connector is our child. The persistent Host belongs to its profile. */
+export function createHostConnection(options: {
+    readonly executable: string;
+    readonly cwd: string;
+    readonly env: NodeJS.ProcessEnv;
+    readonly readinessTimeoutMs?: number;
+    readonly onStartupFailure?: (failure: HostStartupFailure) => void;
+}): HostSupervisor {
+    let connection: LocalConnection | undefined;
+    let starting: Promise<string> | undefined;
+    let stopping: Promise<void> | undefined;
+    const env = Object.fromEntries(Object.entries(options.env).filter(([key]) => !key.startsWith("ELECTRON_")));
+    return {
+        start() {
+            starting ??= (async () => {
+                try {
+                    const result = await run(options.executable, ["connect", "--workspace", options.cwd], {
+                        cwd: options.cwd, env, encoding: "utf8", timeout: options.readinessTimeoutMs ?? 310_000, maxBuffer: 1_048_576,
+                    });
+                    const value: unknown = JSON.parse(result.stdout);
+                    const ready = parsePythonReadyLine(result.stdout);
+                    if (ready === undefined || typeof value !== "object" || value === null
+                        || !("profile_path" in value) || typeof value.profile_path !== "string" || !isAbsolute(value.profile_path)
+                        || !("web_token" in value) || typeof value.web_token !== "string" || !/^[a-f0-9]{48}$/u.test(value.web_token)
+                        || !("workspace" in value) || typeof value.workspace !== "string") throw new Error("invalid_local_host");
+                    connection = { ready, profilePath: value.profile_path, webToken: value.web_token, workspace: value.workspace };
+                    return ready.pageUrl;
+                } catch (error: unknown) {
+                    const message = failureCode(error);
+                    options.onStartupFailure?.({ kind: "spawn-error", message, tail: "" });
+                    throw new Error(message);
+                }
+            })();
+            return starting;
+        },
+        shutdown() {
+            stopping ??= (async () => {
+                if (connection === undefined) return;
+                try {
+                    await run(options.executable, ["stop", "--profile", connection.profilePath, "--expected-build", connection.ready.buildId, "--expected-epoch", String(connection.ready.hostEpoch)], {
+                        cwd: options.cwd, env, encoding: "utf8", timeout: 190_000, maxBuffer: 32_768,
+                    });
+                } catch { throw new Error("local_host_stop_failed"); }
+            })().catch((error: unknown) => { stopping = undefined; throw error; });
+            return stopping;
+        },
+        pythonReady: () => connection?.ready,
+        connection: () => connection,
+        tail: () => "",
+    };
 }

@@ -254,7 +254,8 @@ def application(owner: Host) -> FastAPI:
         return response
 
     @app.get("/api/v1/bootstrap")
-    async def bootstrap() -> Identity:
+    async def bootstrap(response: Response) -> Identity:
+        response.headers["X-AmazMe-Local-Host"] = "1"
         return owner.lifecycle.identity((await owner.lifecycle.health()).state)
 
     @app.post("/api/v1/memories")

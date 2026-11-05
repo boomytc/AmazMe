@@ -4,6 +4,7 @@ import { translate } from "@amazme/web/strings";
 
 export interface TrayActions {
 	readonly show: () => void;
+	readonly stop: () => void;
 	readonly quit: () => void;
 }
 
@@ -17,6 +18,7 @@ export function trayMenuTemplate(
 	return [
 		{ label: pendingApprovals > 0 ? `${open} (${pendingApprovals})` : open, click: actions.show },
 		{ type: "separator" },
+		{ label: translate(locale, "desktop.stop.action"), click: actions.stop },
 		{ label: translate(locale, "desktop.tray.quit"), click: actions.quit },
 	];
 }

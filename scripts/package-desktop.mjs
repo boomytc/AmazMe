@@ -168,6 +168,8 @@ async function smokeBundle(appDirectory) {
 	const env = { ...process.env, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
 	Object.assign(env, {
 		AMAZME_GUI_SMOKE: "1",
+        AMAZME_PROFILE: join(scratch, "agent", "python-host"),
+        AMAZME_HOME: scratch,
 		AMAZME_GUI_SMOKE_DATA_DIR: data,
 		AMAZME_GUI_CWD: data,
 		AMAZME_SERVER_DIR: join(scratch, "server"),
@@ -177,6 +179,7 @@ async function smokeBundle(appDirectory) {
 	const child = spawn(join(moved, "Contents", "MacOS", "AmazMe"), ["--no-sandbox"], { env, stdio: ["ignore", "pipe", "pipe"] });
 	let output = "";
 	const expectsPython = existsSync(join(moved, "Contents", "Resources", "amazme-backend", "amazme-backend"));
+	try {
 	const report = await new Promise((resolvePromise, reject) => {
 		const timer = setTimeout(() => reject(new Error(`Packaged app did not report within 180s:\n${output}`)), 180_000);
 		child.stdout.on("data", (chunk) => { output += String(chunk); });
@@ -194,8 +197,20 @@ async function smokeBundle(appDirectory) {
 			else resolvePromise(line);
 		});
 	});
-	await rm(scratch, { recursive: true, force: true });
-	return report;
+    return report;
+    } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+            child.kill("SIGTERM");
+            await new Promise((resolveClose, reject) => {
+                const timer = setTimeout(() => reject(new Error("Desktop self-check process has not exited")), 10_000);
+                child.once("close", () => { clearTimeout(timer); resolveClose(); });
+            });
+        }
+        if (expectsPython && existsSync(join(env.AMAZME_PROFILE, "config.json"))) {
+            run(join(moved, "Contents", "Resources", "amazme-backend", "amazme-backend"), ["stop", "--profile", env.AMAZME_PROFILE]);
+        }
+        await rm(scratch, { recursive: true, force: true });
+    }
 }
 
 async function createDmg(appDirectory, out, manifest, signing) {

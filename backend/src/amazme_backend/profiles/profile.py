@@ -10,7 +10,7 @@ from typing import Literal
 
 import httpx
 
-from amazme_backend.contracts.identity import Identity
+from amazme_backend.contracts.identity import HostReady, Identity
 from amazme_backend.contracts.profiles import ProfileConfig, ProviderConfig
 from amazme_backend.platform.ipc import Peer
 from amazme_backend.platform.private_files import private_write
@@ -20,6 +20,12 @@ from amazme_backend.shared.errors import BackendError
 class Profile:
     def __init__(self, path: Path):
         self.path = path.resolve(strict=True)
+        if (self.path.parent / ".profile-migration.json").exists():
+            raise BackendError("profile_migration_incomplete")
+        if (self.path / "RETIRED.json").exists():
+            raise BackendError("profile_retired")
+        if (self.path / "MIGRATED.json").exists():
+            raise BackendError("profile_migrated")
         self.config = ProfileConfig.model_validate_json((self.path / "config.json").read_bytes())
         self.token = (self.path / "control.token").read_text().strip()
         key = hashlib.sha256(str(self.path).encode()).hexdigest()[:16]
@@ -59,6 +65,16 @@ class Profile:
                  state: str = "ready", host_epoch: int = 0) -> Identity:
         return Identity(build_id=build, profile_id=self.config.profile_id, instance_id=instance, pid=os.getpid(),
                         role=role, state=state, host_epoch=host_epoch, fingerprint=build)
+
+
+def live_host_ready(profile_id: str, recorded: HostReady, identity: Identity) -> HostReady:
+    """Authenticate the running instance against its published readiness record."""
+    if (recorded.profile_id != profile_id or identity.profile_id != profile_id or identity.role != "host"
+            or identity.instance_id != recorded.instance_id or identity.pid != recorded.pid
+            or identity.build_id != recorded.build_id or identity.fingerprint != identity.build_id
+            or identity.host_epoch != recorded.host_epoch):
+        raise BackendError("local_host_identity_mismatch")
+    return HostReady(url=recorded.url, **identity.model_dump())
 
 
 async def wait_peer(peer: Peer, expected_build: str, timeout: float = 20,

@@ -163,7 +163,7 @@ export function createMacUpdateIO(options: {
 			const node = join(options.target, "Contents", "Resources", "node", "bin", "node");
 			const helperEnv: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: process.env.HOME };
 			if (options.userData) helperEnv.AMAZME_GUI_USER_DATA_DIR = options.userData;
-			for (const key of ["AMAZME_CODING_AGENT_DIR", "AMAZME_SERVER_DIR", "AMAZME_GUI_CWD", "AMAZME_AGENTS_HOME", "AMAZME_GUI_SMOKE_DATA_DIR"]) {
+			for (const key of ["AMAZME_HOME", "AMAZME_PROFILE", "AMAZME_CODING_AGENT_DIR", "AMAZME_SERVER_DIR", "AMAZME_GUI_CWD", "AMAZME_AGENTS_HOME", "AMAZME_GUI_SMOKE_DATA_DIR"]) {
 				if (process.env[key]) helperEnv[key] = process.env[key];
 			}
 			await handoffUpdate({

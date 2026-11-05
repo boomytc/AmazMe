@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -19,7 +20,6 @@ from amazme_backend.execution.native import read_report, tool_environment
 from amazme_backend.execution.processes import ProcessReservation, exited
 from amazme_backend.platform.ipc import child_command
 from amazme_backend.platform.resources import package_resource, resource_root
-from amazme_backend.profiles.profile import Profile
 from amazme_backend.shared.errors import BackendError
 
 HELPER = package_resource("codemode_helper")
@@ -73,13 +73,14 @@ def _finish(outcome: CodemodeOutcome, code: int | None, cancel: threading.Event 
     return outcome
 
 
-def bundled_node(runtime_root: Path | None = None) -> Path:
-    """The Node binary shipped beside the backend. A PATH lookup is never a substitute."""
-    root = (runtime_root or resource_root()).resolve()
-    candidate = root / "node" / "bin" / "node"
-    if candidate.is_symlink() or not candidate.is_file() or not os.access(candidate, os.X_OK):
+def bundled_node() -> Path:
+    """Frozen builds use their own Node; source launches may explicitly supply their runtime."""
+    source_node = os.environ.get("AMAZME_NODE") if not getattr(sys, "frozen", False) else None
+    root = resource_root().resolve()
+    candidate = Path(source_node) if source_node else root / "node" / "bin" / "node"
+    if not candidate.is_absolute() or candidate.is_symlink() or not candidate.is_file() or not os.access(candidate, os.X_OK):
         raise BackendError("codemode_runtime_missing", status=503)
-    if not candidate.resolve().is_relative_to(root):
+    if not source_node and not candidate.resolve().is_relative_to(root):
         raise BackendError("codemode_runtime_missing", status=503)
     return candidate
 
@@ -89,9 +90,7 @@ def run_codemode(source: str, state: dict[str, object], *, profile: Path, run_id
                  timeout_ms: int = DEFAULT_TIMEOUT_MS, cancel: threading.Event | None = None) -> CodemodeOutcome:
     if len(source) > SOURCE_LIMIT:
         raise BackendError("codemode_source_limit")
-    import sys
-    root = None if getattr(sys, "frozen", False) else Path(Profile(profile).config.resources)
-    bundled_node(root)
+    bundled_node()
     if not HELPER.is_file():
         raise BackendError("codemode_runtime_missing", status=503)
     instance = "code-" + run_id
