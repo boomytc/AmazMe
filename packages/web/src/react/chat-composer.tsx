@@ -44,7 +44,7 @@ type IconName =
 	| "hand"
 	| "plus"
 	| "shield-alert"
-	| "shield-check"
+	| "shield-terminal"
 	| "spinner"
 	| "stop"
 	| "x";
@@ -505,7 +505,7 @@ const PERMISSIONS = [
 	},
 	{
 		value: "mutations",
-		icon: "shield-check",
+		icon: "shield-terminal",
 		label: "permission.assist",
 		description: "permission.assistDescription",
 	},
@@ -564,7 +564,7 @@ function PermissionPicker({
 				aria-haspopup="dialog"
 				aria-expanded={open}
 				aria-label={`${translate(view.locale, "permission.heading")}: ${translate(view.locale, selected.label)}`}
-				title={translate(view.locale, "permission.nextRequest")}
+				title={translate(view.locale, "permission.scope")}
 				onClick={() => setOpen((value) => !value)}
 			>
 				<Icon name={selected.icon} />
@@ -613,9 +613,6 @@ function PermissionPicker({
 									</button>
 								))}
 							</div>
-							<p className="permission-hint">
-								{translate(view.locale, "permission.nextRequest")}
-							</p>
 						</div>,
 						document.body,
 					)

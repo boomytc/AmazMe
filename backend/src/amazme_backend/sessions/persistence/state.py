@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from amazme_backend.contracts.models import CatalogModel
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.resources import ResourceOptions
+from amazme_backend.contracts.sessions import ApprovalPolicy
 
 type ResourceExpander = Callable[[str, ResourceOptions], tuple[str, str]]
 type SecretSource = Callable[[], Sequence[str]]
@@ -13,7 +14,8 @@ type SecretSource = Callable[[], Sequence[str]]
 class SessionContext:
     session_id: str
     config: ProviderConfig
-    approval_policy: str
+    approval_policy: ApprovalPolicy
+    workspace: str
     instance: str
     catalog: Mapping[tuple[str, str], CatalogModel]
     expand_resources: ResourceExpander | None

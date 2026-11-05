@@ -2723,7 +2723,7 @@ p {
 :root[data-theme="light"] .permission-trigger[data-policy="auto"],
 :root[data-theme="light"] .permission-option[data-policy="auto"] { color: #b94e16; }
 .permission-menu {
-	z-index: var(--z-menu); width: min(336px, calc(100vw - 16px));
+	z-index: var(--z-menu); width: min(364px, calc(100vw - 16px));
 	padding: 4px; overflow-y: auto;
 }
 .permission-option {
@@ -2739,7 +2739,6 @@ p {
 .permission-option[data-policy="auto"] .permission-description { color: inherit; }
 .permission-option > .permission-check { visibility: hidden; width: 14px; height: 14px; }
 .permission-option[aria-checked="true"] > .permission-check { visibility: visible; }
-.permission-hint { margin: 3px 8px 4px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 11px; line-height: 17px; }
 
 .composer-trailing {
 	position: relative;

@@ -80,8 +80,11 @@ def create_worker(profile: Profile, session: str, instance: str, *, require_exis
         credential = AccountStore(profile.path).read().credentials.get('deepseek')
         return credential.key.get_secret_value() if config.provider == 'deepseek' and isinstance(credential, ApiKeyCredential) else ''
 
-    store = SessionStore(session_database(profile.path, session), session, config=profile.config.provider, approval_policy=profile.config.approval_policy, require_existing=require_existing, instance=instance, model_catalog=SELECTION_INDEX, expand_resources=expand, secret_source=resource_secrets)
-    context = WorkerContext(profile_id=profile.config.profile_id, token=profile.token, identity=lambda state, epoch: profile.identity(instance, role='worker', state=state, host_epoch=epoch), current_provider=current_provider, configured_model=configured_model, secrets=account_secrets, contains_secret=scan, prepare_messages=prepare_messages, workspace=lambda: queries.session_workspace(session), host_ready=lambda: HostReady.model_validate_json((profile.path / 'ready.json').read_bytes()), web_key=web_key, execute_web=execute_web, mcp_catalog=lambda views: offers_from_views(views, surface='catalog'), catalog_payload=catalog_payload)
+    def workspace_name() -> str:
+        return queries.session_workspace(session)
+
+    store = SessionStore(session_database(profile.path, session), session, config=profile.config.provider, approval_policy=profile.config.approval_policy, workspace="primary" if validation else workspace_name(), require_existing=require_existing, instance=instance, model_catalog=SELECTION_INDEX, expand_resources=expand, secret_source=resource_secrets)
+    context = WorkerContext(profile_id=profile.config.profile_id, token=profile.token, identity=lambda state, epoch: profile.identity(instance, role='worker', state=state, host_epoch=epoch), current_provider=current_provider, configured_model=configured_model, secrets=account_secrets, contains_secret=scan, prepare_messages=prepare_messages, workspace=workspace_name, host_ready=lambda: HostReady.model_validate_json((profile.path / 'ready.json').read_bytes()), web_key=web_key, execute_web=execute_web, mcp_catalog=lambda views: offers_from_views(views, surface='catalog'), catalog_payload=catalog_payload)
     return Worker(session, instance, store=store, supervisor=SupervisorClient(profile.socket('supervisor'), profile.token), context=context, validation=validation)
 
 

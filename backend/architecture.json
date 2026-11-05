@@ -205,7 +205,9 @@
         "amazme_backend.shared.model",
         "amazme_backend.contracts.questions",
         "amazme_backend.ai.usage",
-        "amazme_backend.platform.sqlite_schema"
+        "amazme_backend.platform.sqlite_schema",
+        "amazme_backend.workspaces.patch_syntax",
+        "amazme_backend.workspaces.paths"
       ]
     },
     "agent": {
@@ -342,6 +344,7 @@
         "amazme_backend.workspaces.files",
         "amazme_backend.workspaces.grants",
         "amazme_backend.workspaces.paths",
+        "amazme_backend.workspaces.patch_syntax",
         "amazme_backend.workspaces.patches",
         "amazme_backend.workspaces.search",
         "amazme_backend.workspaces.repositories"
@@ -384,7 +387,7 @@
         "amazme_backend.contracts.models",
         "amazme_backend.shared.errors",
         "amazme_backend.shared.model",
-        "amazme_backend.workspaces.grants"
+        "amazme_backend.workspaces.paths"
       ]
     },
     "features.schedules": {
@@ -572,6 +575,7 @@
         "amazme_backend.workspaces.files",
         "amazme_backend.workspaces.grants",
         "amazme_backend.workspaces.paths",
+        "amazme_backend.workspaces.patch_syntax",
         "amazme_backend.workspaces.patches",
         "amazme_backend.contracts.questions",
         "amazme_backend.platform.sqlite_schema"
@@ -854,7 +858,10 @@
           "amazme_backend.sessions",
           "amazme_backend.ai",
           "amazme_backend.ai.types",
-          "amazme_backend.ai.usage"
+          "amazme_backend.ai.usage",
+          "amazme_backend.workspaces",
+          "amazme_backend.workspaces.paths",
+          "amazme_backend.workspaces.patch_syntax"
         ],
         "prefixes": [
           "amazme_backend.shared",

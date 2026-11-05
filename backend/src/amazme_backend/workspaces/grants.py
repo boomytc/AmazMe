@@ -1,18 +1,8 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from amazme_backend.shared.errors import BackendError
-
-PRIMARY = "primary"
-_NAME = re.compile("[a-z][a-z0-9-]{0,31}")
-
-
-def validate_workspace(name: str) -> str:
-    if name != PRIMARY and (name == "grant" or _NAME.fullmatch(name) is None):
-        raise BackendError("invalid_workspace_name")
-    return name
 
 
 def check_grant_directory(path: Path, profile: Path, primary: Path) -> Path:

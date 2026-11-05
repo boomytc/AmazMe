@@ -7,7 +7,7 @@ import hashlib
 from amazme_backend.contracts.memories import MemoryView
 from amazme_backend.contracts.models import Message
 from amazme_backend.shared.errors import BackendError
-from amazme_backend.workspaces.grants import validate_workspace
+from amazme_backend.workspaces.paths import validate_workspace
 
 LIMIT = 5
 

@@ -41,6 +41,7 @@ from amazme_backend.sessions.persistence.records import (
     save_step,
 )
 from amazme_backend.sessions.persistence.state import SessionContext
+from amazme_backend.sessions.policy.approvals import needs_approval
 from amazme_backend.sessions.policy.limits import (
     PENDING_LIMIT,
     TERMINAL,
@@ -210,12 +211,10 @@ def claim_request(state: SessionContext, db: sqlite3.Connection, c: Changes, req
 
 def grant_step(state: SessionContext, db: sqlite3.Connection, c: Changes, request: Receipt, step: Step) -> bool:
     assert step.call is not None
-    binding = approval_binding(state, db, request.request_id, step.call)
     policy = load_run(db, request.request_id).config.approval_policy or state.approval_policy
-    required = policy == "all" or (
-        policy == "mutations" and step.call.name in {"shell", "write_file", "edit_file", "apply_patch", "job_kill", "mcp_tool", "plugin_tool"})
-    if not required:
+    if not step.approval_id and not needs_approval(policy, step.call, state.workspace, request):
         return True
+    binding = approval_binding(state, db, request.request_id, step.call)
     approval: Approval | None = None
     if step.approval_id:
         row = db.execute("SELECT payload FROM approvals WHERE id=?", (step.approval_id,)).fetchone()

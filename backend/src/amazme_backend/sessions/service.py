@@ -45,6 +45,7 @@ from amazme_backend.contracts.resources import ResourceOptions
 from amazme_backend.contracts.sessions import (
     Approval,
     ApprovalDecision,
+    ApprovalPolicy,
     Compaction,
     Decision,
     Preview,
@@ -145,10 +146,10 @@ from amazme_backend.shared.model import Model
 class SessionStore:
     """Complete session operations; one private writer commits their durable intents and events."""
 
-    def __init__(self, path: Path, session_id: str, *, config: ProviderConfig | None = None, approval_policy: str = 'mutations', require_existing: bool = False, read_only: bool = False, instance: str = '', model_catalog: Mapping[tuple[str, str], CatalogModel] | None = None, expand_resources: ResourceExpander | None = None, secret_source: SecretSource | None = None):
+    def __init__(self, path: Path, session_id: str, *, config: ProviderConfig | None = None, approval_policy: ApprovalPolicy = 'mutations', workspace: str = 'primary', require_existing: bool = False, read_only: bool = False, instance: str = '', model_catalog: Mapping[tuple[str, str], CatalogModel] | None = None, expand_resources: ResourceExpander | None = None, secret_source: SecretSource | None = None):
         if expand_resources is not None and secret_source is None:
             raise ValueError('Resource expansion requires a fresh secret source')
-        self._state = SessionContext(session_id, config or ProviderConfig(provider='faux'), approval_policy, instance or secrets.token_hex(16), {} if model_catalog is None else model_catalog, expand_resources, (lambda: ()) if secret_source is None else secret_source)
+        self._state = SessionContext(session_id, config or ProviderConfig(provider='faux'), approval_policy, workspace, instance or secrets.token_hex(16), {} if model_catalog is None else model_catalog, expand_resources, (lambda: ()) if secret_source is None else secret_source)
         self._store = SessionTransactions(path, require_existing=require_existing, read_only=read_only)
 
     @property

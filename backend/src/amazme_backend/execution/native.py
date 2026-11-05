@@ -31,6 +31,7 @@ from amazme_backend.contracts.execution import (
     ReadFile,
     ToolResult,
     WriteFile,
+    readonly_command_argv,
 )
 from amazme_backend.contracts.workspaces import FileWrite
 from amazme_backend.execution.output import RETENTION_SECONDS, OutputCapture, decode_prefix, read_output
@@ -261,7 +262,8 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
                                        file_observation=observation, file_changes=file_changes)
         else:
             shell = pwd.getpwuid(os.getuid()).pw_shell or "/bin/sh"
-            child = subprocess.Popen([shell, "-c", permit.command], cwd=permit.cwd, env=tool_environment(),
+            argv = readonly_command_argv(permit.command) or [shell, "-c", permit.command]
+            child = subprocess.Popen(argv, cwd=permit.cwd, env=tool_environment(),
                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      start_new_session=True)
             tracked[child.pid] = ProcessIdentity.capture(psutil.Process(child.pid))

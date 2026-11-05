@@ -48,7 +48,8 @@ from amazme_backend.host.lifecycle import HostLifecycle
 from amazme_backend.shared.errors import BackendError
 from amazme_backend.workspaces.files import capture_text, list_files, read_file, write_file
 from amazme_backend.workspaces.grants import check_grant_directory
-from amazme_backend.workspaces.patches import parse_patch, prepare_patch
+from amazme_backend.workspaces.patch_syntax import parse_patch
+from amazme_backend.workspaces.patches import prepare_patch
 from amazme_backend.workspaces.paths import (
     PRIMARY,
     client_path,

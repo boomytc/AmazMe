@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
@@ -21,6 +22,18 @@ class Command(Model):
         if not self.run_in_background and self.timeout_seconds > 120:
             raise ValueError("foreground execution timeout is at most 120 seconds; use explicit background execution")
         return self
+
+
+def readonly_command_argv(command: str) -> list[str] | None:
+    """Exactly these literal invocations can run without starting a shell or loading user rc files."""
+    text = command.strip(" \t")
+    if text == "pwd":
+        return ["/bin/pwd"]
+    if re.fullmatch(r"ls(?:[ \t]+-[alh1]+)*(?:[ \t]+\.)?", text, re.ASCII):
+        return ["/bin/ls", *text.split()[1:]]
+    if re.fullmatch(r"echo(?:[ \t]+[A-Za-z0-9_./,:+-]+)*", text, re.ASCII):
+        return ["/bin/echo", *text.split()[1:]]
+    return None
 
 
 class Shell(Command):
