@@ -34,7 +34,7 @@ MCP 服务同样归属会话；停止服务后，未取得结果的调用保持 
 `web --workspace /absolute/project` 直接输出本机窗口链接；`doctor [--profile /absolute/profile]` 查询已有 Host 的健康状态，既不初始化 profile，也不启动服务。`connect` 的私有 JSON 输出仅供桌面连接使用。`stop`、`pair`、`init` 和 `serve` 保留为后台管理入口。业务操作使用 HTTP/WS 和 Python SDK，不维护终端会话客户端。
 
 首次启动使用新的 profile、实际项目目录和权限为 0600 的供应商 JSON（`provider`、`model`、
-`api_key`）；不要把该 JSON 放入仓库。`init` 复制配置后，原临时文件可删除。
+`api_key`）；不要把该 JSON 放入仓库。`init` 显式创建当前 profile 的配置和独立账号库，完成后原供应商临时文件可删除。不支持 `--source-profile` 或链接其他账号库；缺失账号库或非当前 schema 的数据库会被拒绝，不自动重建或迁移。
 
 ```bash
 backend/.venv/bin/python -m amazme_backend init --profile /absolute/new-profile --workspace /absolute/project --provider-config /private/provider.json

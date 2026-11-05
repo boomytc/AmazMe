@@ -419,7 +419,7 @@ export function checkSourceContracts(repoRoot) {
 						!development &&
 						excluded.some((item) => !item.includes("*") && (normalized === item || normalized.startsWith(`${item}/`)))
 					)
-						failures.push(`${location}: published source imports a build-excluded module: ${value}`);
+						failures.push(`${location}: workspace source imports a build-excluded module: ${value}`);
 					return;
 				}
 				if (value.startsWith("/") || isBuiltin(value)) return;

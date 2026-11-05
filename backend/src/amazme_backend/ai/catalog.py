@@ -1,4 +1,4 @@
-"""Packaged model metadata from Pi and provider catalogs; the runtime never imports TS business code."""
+"""Checked-in model metadata from Pi and provider catalogs; the runtime never imports TS business code."""
 
 import json
 

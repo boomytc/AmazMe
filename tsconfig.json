@@ -8,12 +8,6 @@
 			"@amazme/codemode": [
 				"./packages/codemode/src/index.ts"
 			],
-			"@amazme/codemode/declarations": [
-				"./packages/codemode/src/declarations.ts"
-			],
-			"@amazme/codemode/source": [
-				"./packages/codemode/src/source.ts"
-			],
 			"@amazme/web": [
 				"./packages/web/dist/index.d.ts"
 			],

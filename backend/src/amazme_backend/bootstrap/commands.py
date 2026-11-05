@@ -45,7 +45,7 @@ def main() -> None:
         from amazme_backend.execution.mcp.http import run_http_gate
 
         async def credential(profile: Profile, provider: str) -> str:
-            return await AccountStore(profile.account_path).resolve_token(provider)
+            return await AccountStore(profile.path).resolve_token(provider)
 
         async def http_gate(permit: dict[str, JsonValue]) -> int:
             return await run_http_gate(permit, resolve_credential=credential)
@@ -72,7 +72,6 @@ def main() -> None:
     parser.add_argument("--profile", type=Path)
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--provider-config", type=Path)
-    parser.add_argument("--source-profile", type=Path)
     parser.add_argument("--session")
     parser.add_argument("--instance")
     parser.add_argument("--lifetime-fd", type=int)
@@ -91,13 +90,10 @@ def main() -> None:
     os.umask(0o077)
     if args.mode == "init":
         from amazme_backend.bootstrap.initialization import initialize
-        if not args.workspace or (not args.source_profile and not args.provider_config):
-            parser.error("init requires --workspace and --provider-config or --source-profile")
-        if args.source_profile and args.provider_config:
-            parser.error("init --source-profile excludes --provider-config")
-        provider = (ProviderConfig.model_validate_json(args.provider_config.read_bytes())
-                    if args.provider_config else ProviderConfig(provider="faux", model="faux"))
-        initialize(args.profile, args.workspace, provider, source=args.source_profile, approval=args.approval_policy)
+        if not args.workspace or not args.provider_config:
+            parser.error("init requires --workspace and --provider-config")
+        provider = ProviderConfig.model_validate_json(args.provider_config.read_bytes())
+        initialize(args.profile, args.workspace, provider, approval=args.approval_policy)
         print(json.dumps({"profile": str(args.profile), "workspace": str(args.workspace.resolve()), "version": "0.1.0"}))
         return
     profile = Profile(args.profile)

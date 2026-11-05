@@ -31,7 +31,8 @@
         "amazme_backend.platform.ipc",
         "amazme_backend.platform.private_files",
         "amazme_backend.platform.resource_manifest",
-        "amazme_backend.platform.resources"
+        "amazme_backend.platform.resources",
+        "amazme_backend.platform.sqlite_schema"
       ],
       "imports": [
         "amazme_backend.shared.errors",
@@ -206,7 +207,8 @@
         "amazme_backend.shared.errors",
         "amazme_backend.shared.model",
         "amazme_backend.contracts.questions",
-        "amazme_backend.ai.usage"
+        "amazme_backend.ai.usage",
+        "amazme_backend.platform.sqlite_schema"
       ]
     },
     "agent": {
@@ -332,7 +334,8 @@
         "amazme_backend.workspaces.paths",
         "amazme_backend.workspaces.patches",
         "amazme_backend.workspaces.search",
-        "amazme_backend.workspaces.repositories"
+        "amazme_backend.workspaces.repositories",
+        "amazme_backend.platform.sqlite_schema"
       ]
     },
     "workspaces": {
@@ -575,7 +578,8 @@
         "amazme_backend.workspaces.grants",
         "amazme_backend.workspaces.paths",
         "amazme_backend.workspaces.patches",
-        "amazme_backend.contracts.questions"
+        "amazme_backend.contracts.questions",
+        "amazme_backend.platform.sqlite_schema"
       ]
     },
     "interfaces": {

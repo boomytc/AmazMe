@@ -1096,7 +1096,7 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 				rows: state.schedules.map((schedule) => {
 					const summary = summarize(schedule.prompt, 90);
 					const defaultTitle = translate(locale, "automation.defaultTitle");
-					/* The host's legacy default is Chinese; it is a placeholder in every language. */
+					/* The host's default title is a placeholder in every interface language. */
 					const customTitle =
 						schedule.target.kind === "new_session" &&
 						schedule.target.title.trim().length > 0 &&

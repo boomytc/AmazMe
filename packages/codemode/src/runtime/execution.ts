@@ -3,8 +3,7 @@
  *
  * The host owns everything the script must not influence: the tool table, call records, output,
  * the deadline, the caller's abort signal, and the decoding of what the VM reports. The VM itself
- * runs somewhere a {@link VmLauncher} decides: a worker thread (`CodemodeSandbox`), the calling
- * thread (`InlineCodemodeSandbox`).
+ * runs on the helper thread through `InlineCodemodeSandbox`.
  * The two sides only exchange the messages in `protocol.ts`, so the launchers differ in transport
  * and termination, not in behavior.
  *

@@ -1,4 +1,4 @@
-"""Packaged classifier model catalog, independent of account storage."""
+"""Checked-in classifier model catalog, independent of account storage."""
 from pydantic import TypeAdapter
 
 from amazme_backend.ai.classification.types import ClassifierModel

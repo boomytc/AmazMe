@@ -26,7 +26,6 @@ class ProfileConfig(Model):
     profile_id: str
     workspace: str
     user_resources: str = ""
-    account_profile: str = ""
     provider: ProviderConfig
     approval_policy: ApprovalPolicy = "mutations"
     credential_revision: int = Field(default=0, ge=0)

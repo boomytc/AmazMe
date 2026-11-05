@@ -1,4 +1,4 @@
-"""Refresh the packaged Command Code chat catalog from its public model routes."""
+"""Refresh the checked-in Command Code chat catalog from its public model routes."""
 
 import argparse
 import json

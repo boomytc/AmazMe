@@ -34,7 +34,7 @@ try {
 }
 ```
 
-实际集成以 Python helper 源码为准。`source` 和 `declarations` 子入口提供脚本选项解析及工具声明生成；根入口保留本机 QuickJS 类型、脚本结果和执行能力。它们不拥有产品会话或持久状态。
+实际集成以 Python helper 源码为准。workspace 根入口只提供 Python helper 使用的 inline sandbox 与 WASM 加载器，不维护终端客户端的声明生成、脚本选项解析或独立 worker 入口。
 
 脚本输出受字符数和条目数限制，存储写入也有单值和总量限制；具体上限以 `src/runtime/prelude-source.ts` 为准。Python 侧另有脚本长度、超时和内存预算，以 `execution/codemode/runtime.py` 为准。
 

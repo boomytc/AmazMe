@@ -1,15 +1,13 @@
 import type { CodemodeDuring, CodemodeOutputItem } from "../types.ts";
-import type { CodemodeWasmModule } from "../wasm.ts";
 
 /**
- * Messages between the host (main thread) and the worker. Tool arguments,
- * results, and values cross as JSON strings: the worker passes them into and
+ * Messages between the helper and the VM. Tool arguments,
+ * results, and values cross as JSON strings: the helper passes them into and
  * out of the QuickJS VM as strings and never builds structured values itself.
  */
 
 /**
- * Everything a VM needs to run one script, independent of where it runs. Plain data, so it can
- * cross a `postMessage` or a Workers RPC call unchanged.
+ * Everything the inline VM needs to run one script.
  */
 export interface VmStartData {
 	code: string;
@@ -25,16 +23,6 @@ export interface VmStartData {
 	 * `seq` order, and `started`/`idle` messages.
 	 */
 	deterministic?: { startedAt: number; seed: number };
-}
-
-export interface WorkerData extends VmStartData {
-	/** Compiled `quickjs-wasi` module. Structured clone shares the compiled code with the worker. */
-	wasm: CodemodeWasmModule;
-	/**
-	 * One Int32 the host sets to non-zero before terminating the worker. The VM's interrupt handler
-	 * polls it, because Bun's `worker.terminate()` cannot stop a thread that is spinning in wasm.
-	 */
-	interrupt: SharedArrayBuffer;
 }
 
 /** JSON-encoded `{ name?, message, stack? }` of an error thrown by the script. */

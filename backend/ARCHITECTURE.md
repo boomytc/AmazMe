@@ -2,9 +2,11 @@
 
 后端通过仓库内的 `amazme-backend` 源码运行。执行契约见[本机方案](../docs/python-backend-plan.md)，客户端职责见[依赖说明](../docs/python-backend-ts-deps.md)。业务状态与持久化由 Python 拥有。
 
-`profiles.locations` 统一解析产品根、用户资源和默认 profile。`bootstrap.local` 是所有本机客户端唯一的初始化与 start-or-attach 入口，Host 独占同一规范目录并独立于客户端寿命。Web 启动直接使用 Python `web` 入口，终端只保留后台管理命令，业务自动化由 HTTP/WS 与 Python SDK 承担。本地连接入口在目标构建上完成冻结校验与激活，客户端不会把冻结状态误判为另起 Host 的理由。产品面向个人本机使用，不提供旧目录、旧字段或旧格式的迁移兼容。运行资源由当前后端定位，不存入产品 profile。
+`profiles.locations` 统一解析产品根、用户资源和默认 profile。`bootstrap.local` 是所有本机客户端唯一的初始化与 start-or-attach 入口，Host 独占同一规范目录并独立于客户端寿命。Web 启动直接使用 Python `web` 入口，终端只保留后台管理命令，业务自动化由 HTTP/WS 与 Python SDK 承担。本地连接入口在目标构建上完成冻结校验与激活，客户端不会把冻结状态误判为另起 Host 的理由。产品面向个人本机使用，不提供旧目录、旧字段或旧格式的迁移兼容。运行资源由当前后端定位，不存入产品 profile。账号库只归当前 profile 所有，初始化时显式创建；缺失时拒绝读取，不从旧配置重建。
 
 模型目录读取和价格快照属于 `ai.pricing`；已保存单价的纯计算属于 `ai.usage`。会话统计由 `sessions.policy.usage` 对完整持久记录汇总，客户端只呈现结果。该纯闭包由结构检查约束，不能经目录读取进入文件 I/O。
+
+Host、会话和执行库直接使用各自的完整 DDL 建库。`platform.sqlite_schema` 从同一 DDL 推导表、列与索引清单，在可写打开之前校验现有库；不补列、改表或转换旧格式。
 
 ## 模块
 

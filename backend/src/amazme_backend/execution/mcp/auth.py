@@ -61,7 +61,7 @@ class TokenStore:
         key = hashlib.sha256(
             json.dumps([name, settings.url, self.settings.client_id, registration]).encode()
         ).hexdigest()
-        directory = profile.account_path / "mcp-auth"
+        directory = profile.path / "mcp-auth"
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.path = directory / (key + ".json")
         self.redirect = redirect

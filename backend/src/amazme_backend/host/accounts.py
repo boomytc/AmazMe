@@ -52,7 +52,7 @@ from amazme_backend.shared.errors import BackendError
 class AccountOperations:
     def __init__(self, lifecycle: HostLifecycle):
         self.lifecycle = lifecycle
-        self.accounts = AccountStore(lifecycle.profile.account_path)
+        self.accounts = AccountStore(lifecycle.profile.path)
         self.provider_lock = asyncio.Lock()
         self.provider_checks: set[str] = set()
         self.oauth_logins: dict[str, OAuthLogin] = {}
@@ -454,7 +454,7 @@ class AccountOperations:
                 catalog=SELECTION_INDEX,
                 providers=PROVIDERS,
             )
-            await self.accounts.ensure(self.write_guard)
+            await self.write_guard()
             target = await self.accounts.configured(selected)
             requested = value.model_copy(
                 update={

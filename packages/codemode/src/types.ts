@@ -1,5 +1,3 @@
-import type { CodemodeWasmModule } from "./wasm.ts";
-
 export interface CodemodeToolContext {
 	/**
 	 * Aborted when the script finishes (including unawaited calls), the
@@ -8,7 +6,7 @@ export interface CodemodeToolContext {
 	signal: AbortSignal;
 }
 
-/** A JSON Schema document. Only used to render declarations; values are not validated against it. */
+/** A JSON Schema document. Exposed as tool metadata; argument validation remains in Python. */
 export type CodemodeJsonSchema = { [key: string]: unknown } | boolean;
 
 export interface CodemodeTool {
@@ -19,7 +17,7 @@ export interface CodemodeTool {
 	 * `<namespace>.<member>`, which groups them into a frozen namespace object.
 	 */
 	name: string;
-	/** Shown as a doc comment in {@link renderDeclarations}, and listed in `ALL_TOOLS` for tools. */
+	/** Listed in `ALL_TOOLS` for tools. */
 	description?: string;
 	/** Schema of the single argument. Rendered as the parameter type; `unknown` when omitted. */
 	inputSchema?: CodemodeJsonSchema;
@@ -28,7 +26,7 @@ export interface CodemodeTool {
 	/** Globals only: `execute` receives all call arguments as an array instead of the first one. */
 	spread?: boolean;
 	/**
-	 * Globals only: TypeScript parameter list and return type for {@link renderDeclarations}, for
+	 * Globals only: TypeScript parameter list and return type metadata, for
 	 * example `(type: string, id?: string): Promise<Model[]>`. Replaces the rendering from the schemas.
 	 */
 	signature?: string;
@@ -129,33 +127,6 @@ export interface CodemodeSandboxBaseOptions {
 	 * `InternalError: out of memory`. Default: no limit beyond wasm32's 4 GiB address space.
 	 */
 	memoryLimitBytes?: number;
-}
-
-/** Options of `CodemodeSandbox`, which runs each VM in a Node or Bun worker thread. */
-export interface CodemodeSandboxOptions extends CodemodeSandboxBaseOptions {
-	/**
-	 * Compiled `quickjs-wasi/quickjs.wasm`, usually from {@link loadQuickJSWasm}. Default:
-	 * `loadQuickJSWasm()`, the file in the installed `quickjs-wasi` dependency.
-	 */
-	wasm?: CodemodeWasmModule | Promise<CodemodeWasmModule>;
-	/**
-	 * Worker entry URL or path. Defaults to this workspace's own worker file.
-	 */
-	workerUrl?: string | URL;
-	/**
-	 * Synchronously reserves capacity immediately before creating each worker, after loading wasm.
-	 * Throw to deny admission without starting a worker. Return a release callback, called once if
-	 * worker construction fails or when the worker actually exits, not when the result settles.
-	 * The release callback must not throw. Reservations can be shared across sandbox instances.
-	 */
-	acquireWorker?(): () => void;
-	/**
-	 * Called once for each worker started by execute() or start(). `exited` resolves when that worker
-	 * actually exits, which may be after the result and close() settle: on Bun a non-interruptible
-	 * built-in can delay termination. Use it to keep the worker counted against host concurrency
-	 * limits until it exits. A thrown callback error fails the execution and requests worker termination.
-	 */
-	onWorkerStarted?(exited: Promise<void>): void;
 }
 
 /** A call the script made in a {@link CodemodeSandboxBase.start} run, answered with `CodemodeRun.deliver()`. */

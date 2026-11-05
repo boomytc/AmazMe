@@ -1,34 +1,30 @@
-"""Disk, process, VM, and package census for one build or verification round.
+"""Disk, process, and VM census for one build or verification round.
 
 A passing test report is not this census. ``reclaimed`` is true only after the
 categories in ``CHECKED`` have been read for the scope below. ``main`` never
-deletes a directory. Package builds and named-slot runners may remove unused
-directories they have already classified, and only inside the roots they pass.
+deletes a directory.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import sys
 import time
 from pathlib import Path, PurePosixPath
 from typing import TypedDict
 
 WARN_FREE_BYTES = 50 * 1024**3
-PACKAGE_SLOTS = 2
-CHECKED = ["processes", "vm_dirs", "temp_dirs", "packages", "free_bytes"]
+CHECKED = ["processes", "vm_dirs", "temp_dirs", "free_bytes"]
 SCOPE = (
     "processes classified by mode token and parentage (serve, supervisor, worker, execute, "
     "service-runner, pty-gate, mcp-gate, plugin-gate, lima, hostagent, owned headless browsers, descendants); "
-    "VM directories; am2- temp directories; package-* retention; free space on the artifact volume"
+    "VM directories; am2- temp directories; free space on the artifact volume"
 )
 NOTE = (
     "reclaimed covers only this scope. A test pass is not reclaimed. "
     "A serve-only process match misses supervisor, worker, execute, service-runner, and session gates. "
     "The census command does not delete directories. Durable profiles stay observed and are not stopped. "
-    "Package builds and runners may remove unused over-cap directories only inside the roots they pass. "
     "Confirm an unowned VM directory before removing it. Do not install or start a VM to clean one."
 )
 VM_STEPS = [
@@ -58,7 +54,6 @@ class Report(TypedDict):
     observed: list[dict[str, object]]
     vm_dirs: list[dict[str, object]]
     temp_dirs: list[dict[str, object]]
-    packages: list[dict[str, object]]
     reclaimed: bool
     build_allowed: bool
     deletion: str
@@ -292,41 +287,6 @@ def _topmost(paths: list[Path]) -> list[Path]:
     return chosen
 
 
-def package_rows(roots: list[Path]) -> list[dict[str, object]]:
-    found: list[Path] = []
-    seen: set[Path] = set()
-    budget = _budget()
-    for root in _topmost(roots):
-        if not root.exists() or root.is_symlink():
-            continue
-        for directory, dirnames, _files in os.walk(root, followlinks=False):
-            current = Path(directory)
-            kept: list[str] = []
-            for name in dirnames:
-                path = current / name
-                if path.is_symlink():
-                    continue
-                if name.startswith("package-"):
-                    resolved = path.resolve()
-                    if resolved not in seen:
-                        seen.add(resolved)
-                        found.append(path)
-                    continue
-                kept.append(name)
-            dirnames[:] = kept
-    found.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    rows: list[dict[str, object]] = []
-    for index, path in enumerate(found):
-        current = index < PACKAGE_SLOTS
-        rows.append({
-            "path": str(path),
-            "allocated_bytes": budget.allocated_bytes([path]),
-            "retention": "current_slot" if current else "over_cap",
-            "reason": "newest two package directories" if current else "exceeds the two-slot package cap",
-        })
-    return rows
-
-
 def vm_rows(root: Path) -> tuple[list[dict[str, object]], int]:
     if not root.exists():
         return [], 0
@@ -372,10 +332,8 @@ def assemble(
     observed = [row for row in annotated if row["disposition"] == "observed"]
     directories, vm_bytes = vm_rows(vm_root)
     temps = temp_rows(temp_root)
-    packages = package_rows(artifact_roots)
-    over_cap = any(row["retention"] == "over_cap" for row in packages)
     level = disk_level(free_bytes)
-    reclaimed = not leaks and not directories and not temps and not over_cap
+    reclaimed = not leaks and not directories and not temps
     return {
         "scope": SCOPE,
         "checked": list(CHECKED),
@@ -388,7 +346,6 @@ def assemble(
         "observed": observed,
         "vm_dirs": directories,
         "temp_dirs": temps,
-        "packages": packages,
         "reclaimed": reclaimed,
         "build_allowed": reclaimed and level != "stop",
         "deletion": "not_performed",
@@ -456,7 +413,7 @@ def ledger_path(root: Path | None = None) -> Path:
 
 def record(
     report: dict[str, object], *, purpose: str, event: str, ledger: Path | None = None,
-    before: dict[str, object] | None = None, retired: list[str] | None = None,
+    before: dict[str, object] | None = None,
 ) -> None:
     path = ledger if ledger is not None else ledger_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -474,7 +431,6 @@ def record(
         "observed": report.get("observed", []),
         "vm_dirs": report.get("vm_dirs", []),
         "temp_dirs": report.get("temp_dirs", []),
-        "packages": report.get("packages", []),
         "scope": report.get("scope"),
         "note": report.get("note"),
         "vm_steps": report.get("vm_steps"),
@@ -484,9 +440,6 @@ def record(
         row["free_before"] = before.get("free_bytes")
         row["artifact_before"] = before.get("artifact_bytes")
         row["vm_before"] = before.get("vm_bytes")
-    if retired:
-        row["retired"] = retired
-        row["deletion"] = "unused_directories"
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -502,7 +455,6 @@ def refuse_message(report: dict[str, object]) -> str:
         "leaks": report.get("leaks", report.get("processes", [])),
         "vm_dirs": report.get("vm_dirs", report.get("new_vm_dirs", [])),
         "temp_dirs": report.get("temp_dirs", report.get("new_temp_dirs", [])),
-        "packages": report.get("packages", []),
         "deletion": "not_performed",
         "note": report.get("note", NOTE),
         "vm_steps": report.get("vm_steps", VM_STEPS),
@@ -618,7 +570,6 @@ def owned_after(
         "leaks": report["leaks"],
         "vm_dirs": report["vm_dirs"],
         "temp_dirs": report["temp_dirs"],
-        "packages": report["packages"],
         "disk_level": report["disk_level"],
         "free_bytes": report["free_bytes"],
         "deletion": "not_performed",
@@ -633,119 +584,6 @@ def exit_code(report: Report) -> int:
     if report["disk_level"] == "warn":
         return 2
     return 0
-
-
-def classified_cwd_unreadable(processes: list[ProcessRow]) -> bool:
-    known = {proc["pid"]: proc for proc in processes}
-    for row in annotate(processes):
-        proc = known.get(int(row["pid"]))
-        if proc is not None and proc["cwd"] == "":
-            return True
-    return False
-
-
-def _resolved_roots(roots: list[Path]) -> list[Path]:
-    resolved: list[Path] = []
-    for root in roots:
-        if not root.exists():
-            continue
-        if root.is_symlink():
-            raise RuntimeError(f"deletion root is a symlink: {root}")
-        resolved.append(root.resolve())
-    return resolved
-
-
-def _deletable(path: Path, roots: list[Path], *, prefix: str, direct: bool) -> bool:
-    if not path.name.startswith(prefix) or path.is_symlink() or not path.is_dir():
-        return False
-    try:
-        resolved = path.resolve()
-    except OSError:
-        return False
-    for root in roots:
-        if not resolved.is_relative_to(root) or resolved == root:
-            continue
-        if direct and resolved.parent != root:
-            continue
-        cursor = path
-        safe = True
-        while cursor.resolve() != root:
-            if cursor.is_symlink() or cursor == cursor.parent:
-                safe = False
-                break
-            cursor = cursor.parent
-        if safe:
-            return True
-    return False
-
-
-def _in_use(path: Path, processes: list[ProcessRow]) -> bool:
-    candidates = [path]
-    try:
-        resolved = path.resolve()
-    except OSError:
-        resolved = None
-    if resolved is not None and resolved != path:
-        candidates.append(resolved)
-    return any(mentions_path(proc["argv"], proc["cwd"], candidate) for proc in processes for candidate in candidates)
-
-
-def _refusal(event: str, payload: dict[str, object]) -> SystemExit:
-    removed = payload.get("removed") or []
-    body = {
-        "event": event,
-        "deletion": "partial" if removed else "not_performed",
-        "note": NOTE,
-        **payload,
-    }
-    return SystemExit(json.dumps(body, ensure_ascii=False))
-
-
-def _trim_unused(
-    paths: list[Path], processes: list[ProcessRow], *, keep: int, roots: list[Path], prefix: str,
-    direct: bool, removed: list[str], event: str, extra: dict[str, object],
-) -> list[str]:
-    if len(paths) <= keep:
-        return removed
-    if classified_cwd_unreadable(processes):
-        raise _refusal(event + "_cwd_unreadable", {**extra, "removed": list(removed), "keep": keep})
-    while len(paths) > keep:
-        chosen: int | None = None
-        for index in range(len(paths) - 1, keep - 1, -1):
-            candidate = paths[index]
-            if _deletable(candidate, roots, prefix=prefix, direct=direct) and not _in_use(candidate, processes):
-                chosen = index
-                break
-        if chosen is None:
-            break
-        shutil.rmtree(paths[chosen])
-        removed.append(str(paths[chosen]))
-        del paths[chosen]
-    if removed:
-        print(json.dumps({
-            "event": event, "paths": removed, "deletion": "unused_directories", "keep": keep,
-        }, ensure_ascii=False), file=sys.stderr)
-    if len(paths) > keep:
-        raise _refusal(event + "_blocked", {
-            **extra, "removed": list(removed), "keep": keep, "remaining": [str(path) for path in paths],
-        })
-    return removed
-
-
-def retire_unused_packages(
-    report: dict[str, object], processes: list[ProcessRow], *, keep: int, roots: list[Path],
-    removed: list[str] | None = None,
-) -> list[str]:
-    """Drop unused package directories older than the newest ``keep`` entries."""
-    if keep < 1:
-        raise ValueError("keep at least the newest package slot")
-    sink = removed if removed is not None else []
-    packages = report.get("packages", [])
-    paths = [Path(str(row["path"])) for row in packages if isinstance(row, dict) and row.get("path")]
-    return _trim_unused(
-        paths, processes, keep=keep, roots=_resolved_roots(roots), prefix="package-", direct=False,
-        removed=sink, event="packages_retired", extra={"roots": [str(root) for root in roots]},
-    )
 
 
 def main() -> int:

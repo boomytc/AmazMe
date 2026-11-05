@@ -43,7 +43,7 @@ def create_worker(profile: Profile, session: str, instance: str, *, frozen: bool
         return profile.config.provider
 
     def account_secrets() -> tuple[str, ...]:
-        return AccountStore(profile.account_path).secrets()
+        return AccountStore(profile.path).secrets()
 
     def resource_secrets() -> tuple[str, ...]:
         return (*account_secrets(), profile.token, profile.config.provider.api_key.get_secret_value())
@@ -70,7 +70,7 @@ def create_worker(profile: Profile, session: str, instance: str, *, frozen: bool
         return inject_memories(messages, memories)
 
     async def configured_model(config: ProviderConfig) -> tuple[ProviderConfig, Auth]:
-        configured = await AccountStore(profile.account_path).configured(config)
+        configured = await AccountStore(profile.path).configured(config)
         return configured, Auth(api_key=configured.api_key, auth_type=configured.auth_type,
                                 headers=request_identity(configured.provider))
 
@@ -80,7 +80,7 @@ def create_worker(profile: Profile, session: str, instance: str, *, frozen: bool
                                       contains_secret=contains_secret, secrets=secrets)
 
     def web_key(config: ProviderConfig) -> str:
-        credential = AccountStore(profile.account_path).read().credentials.get('deepseek')
+        credential = AccountStore(profile.path).read().credentials.get('deepseek')
         return credential.key.get_secret_value() if config.provider == 'deepseek' and isinstance(credential, ApiKeyCredential) else ''
 
     store = SessionStore(session_database(profile.path, session), session, build=build,

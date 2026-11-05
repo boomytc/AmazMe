@@ -86,9 +86,8 @@ export function inlineLauncher(
 /**
  * Runs each execution's QuickJS VM on the calling thread. Works in any runtime with WebAssembly
  * and microtasks; needs no worker threads, files, or Node built-ins. A script that computes
- * blocks the caller's thread until it awaits a tool or uses up its interrupt budget, so prefer
- * `CodemodeSandbox` for a host thread that must stay responsive. The Python integration instead
- * owns a separate helper process.
+ * blocks the caller's thread until it awaits a tool or uses up its interrupt budget. Python owns
+ * a separate helper process to keep the Host responsive.
  */
 export class InlineCodemodeSandbox extends CodemodeSandboxBase {
 	constructor(options: InlineCodemodeSandboxOptions) {

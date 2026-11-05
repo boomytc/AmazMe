@@ -28,7 +28,7 @@ from amazme_backend.contracts.accounts import (
     ProviderConfigured,
 )
 from amazme_backend.contracts.models import ProviderApi, ProviderDefinition
-from amazme_backend.contracts.profiles import ProfileConfig, ProviderConfig
+from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.platform.private_files import private_write
 from amazme_backend.shared.errors import BackendError
 from amazme_backend.shared.model import Model
@@ -85,17 +85,10 @@ class AccountStore:
             raise BackendError("invalid_provider")
 
     def read(self) -> AccountDocument:
-        if self.path.exists():
+        try:
             return AccountDocument.model_validate_json(self.path.read_bytes())
-        # Preserve the already configured account when the private vault is first written.
-        config = ProfileConfig.model_validate_json((self.profile / "config.json").read_bytes())
-        key = config.provider.api_key
-        credentials: dict[str, Credential] = {}
-        if key.get_secret_value():
-            credentials[config.provider.provider] = ApiKeyCredential(key=key)
-        return AccountDocument(revision=config.credential_revision, credentials=credentials,
-            transports={config.provider.provider: ProviderTransport(proxy=config.provider.proxy,
-                                                                   headers=config.provider.headers)})
+        except FileNotFoundError as exc:
+            raise BackendError("account_store_missing", status=503) from exc
 
     def write(self, value: AccountDocument) -> None:
         raw = {"format": value.format, "revision": value.revision,
@@ -123,13 +116,6 @@ class AccountStore:
             yield
         finally:
             os.close(fd)
-
-    async def ensure(self, guard: Callable[[], Awaitable[None]] | None = None) -> None:
-        async with self.locked():
-            if guard is not None:
-                await guard()
-            if not self.path.exists():
-                self.write(self.read())
 
     async def save_transport(self, config: ProviderConfig, guard: Callable[[], Awaitable[None]], *, api: ProviderApi | None) -> None:
         async with self.locked():
