@@ -112,6 +112,18 @@ class Host:
         tasks += sum((login.view.phase == "pending" for login in self.accounts.oauth_logins.values()))
         return TaskActivity(active=tasks > 0, tasks=tasks)
 
+    async def retire_idle(self) -> None:
+        async with self.lifecycle.update_lock:
+            self.lifecycle.admit()
+            self.lifecycle.closing = True
+            try:
+                if self.lifecycle.mutating_requests or (await self.task_activity()).active:
+                    raise BackendError("local_host_tasks_running", "后端仍有运行中的任务，请结束任务后重新启动。")
+            except BaseException:
+                self.lifecycle.closing = False
+                raise
+            self.lifecycle.stop.set()
+
     async def shutdown(self) -> None:
         self.lifecycle.closing = True
         await self.lifecycle.store.begin_quit()

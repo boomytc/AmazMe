@@ -474,7 +474,14 @@ export class PageRuntime {
 	start(): Promise<void> {
 		if (this.disposed)
 			return Promise.reject(new Error("页面已经关闭，请重新打开。"));
-		if (!this.starting) this.starting = this.startOnce();
+		if (!this.starting) this.starting = this.startOnce().catch(error => {
+			this.starting = undefined;
+			this.ready = false;
+			this.client.retire();
+			this.client.onStatus("disconnected");
+			this.render();
+			throw error;
+		});
 		return this.starting;
 	}
 	private async startOnce(): Promise<void> {

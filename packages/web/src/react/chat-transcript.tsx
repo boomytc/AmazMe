@@ -1684,7 +1684,7 @@ export function ChatTranscript({ view, actions }: TranscriptProps) {
 					onBlockOpenChange={setBlockOpen}
 					onRevealFailure={revealFailure}
 				/>
-				{view.blocks.length === 0 ? (
+				{view.blocks.length === 0 || view.connectionIssue !== undefined ? (
 					<EmptyState view={view} actions={actions} />
 				) : null}
 				{view.status.length === 0 ? null : (

@@ -25,6 +25,8 @@ export interface ClientConnection {
 
 export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 
+class ConnectionIdentityError extends Error {}
+
 /** Browser transport only. Python remains the sole owner of admissions and execution. */
 export class PythonClient {
 	identity?: Identity;
@@ -65,9 +67,9 @@ export class PythonClient {
 
 	async bootstrap(): Promise<Identity> {
 		const identity = await this.call("GET /api/v1/bootstrap");
-		if (identity.role !== "host" || identity.protocol !== "amazme-http/1" || !identity.host_epoch) throw new Error("后端启动身份不匹配");
-		if (this.identity && this.identity.profile_id !== identity.profile_id) throw new Error("宿主已更换；请重新打开对应窗口，原操作编号仍保留。");
-		if (this.identity && this.identity.build_id !== identity.build_id) throw new Error("后端版本已更换；请刷新页面，原操作编号仍保留。");
+		if (identity.role !== "host" || identity.protocol !== "amazme-http/1" || !identity.host_epoch) throw new ConnectionIdentityError("后端启动身份不匹配，请重新启动。");
+		if (this.identity && this.identity.profile_id !== identity.profile_id) throw new ConnectionIdentityError("宿主已更换；请重新打开对应窗口，原操作编号仍保留。");
+		if (this.identity && this.identity.build_id !== identity.build_id) throw new ConnectionIdentityError("后端版本已更换；请刷新页面，原操作编号仍保留。");
 		this.identity = identity;
 		return identity;
 	}
@@ -82,17 +84,20 @@ export class PythonClient {
 		const connection: ClientConnection = { sessionId, identity, attachment, generation: this.generation, ready: true,
 			active: () => this.identity === identity };
 		try {
-			if (attachment.session_id !== sessionId || attachment.build_id !== identity.build_id || attachment.host_epoch !== identity.host_epoch) throw new Error("会话绑定不匹配");
+			if (attachment.session_id !== sessionId || attachment.build_id !== identity.build_id || attachment.host_epoch !== identity.host_epoch) throw new ConnectionIdentityError("会话绑定不匹配，请重新打开窗口。");
 			return await work(connection);
 		}
 		finally { await this.detach(connection); }
 	}
 
 	async connect(sessionId: string, resume = false): Promise<void> {
+		const previous = this.connection;
 		const cached = resume && this.connection?.sessionId === sessionId ? this.connection.snapshot : undefined;
 		this.retire();
+		if (previous?.sessionId === sessionId) this.connection = previous;
 		const generation = ++this.generation;
 		this.onStatus(resume ? "reconnecting" : "connecting");
+		this.onChange();
 		try {
 			const identity = await this.bootstrap();
 			if (generation !== this.generation) return;
@@ -103,7 +108,7 @@ export class PythonClient {
 			const attachment = await this.call("POST /api/v1/sessions/{session}/attachments", { path: { session: sessionId }, identity });
 			connection.attachment = attachment;
 			if (!connection.active()) { void this.detach(connection); return; }
-			if (attachment.session_id !== sessionId || attachment.build_id !== identity.build_id || attachment.host_epoch !== identity.host_epoch) throw new Error("会话绑定不匹配");
+			if (attachment.session_id !== sessionId || attachment.build_id !== identity.build_id || attachment.host_epoch !== identity.host_epoch) throw new ConnectionIdentityError("会话绑定不匹配，请重新打开窗口。");
 			const url = new URL(`/api/v1/events/${encodeURIComponent(sessionId)}`, this.origin);
 			url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 			const socket = new WebSocket(url);
@@ -146,7 +151,7 @@ export class PythonClient {
 			};
 		} catch (error) {
 			if (generation !== this.generation) return;
-			const terminal = error instanceof ApiError && [401, 403, 404, 410].includes(error.status);
+			const terminal = error instanceof ConnectionIdentityError || error instanceof ApiError && [401, 403, 404, 410].includes(error.status);
 			if (terminal && this.connection) {
 				this.connection.ready = false;
 				this.connection.failure = error.message;

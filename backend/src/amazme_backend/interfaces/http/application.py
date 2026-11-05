@@ -230,6 +230,12 @@ def application(owner: Host) -> FastAPI:
             return JSONResponse(
                 {"code": "unauthenticated", "message": "Authentication required"}, status_code=401
             )
+        mutating = (path.startswith(("/api/", "/control/"))
+                    and request.method not in {"GET", "HEAD", "OPTIONS"} and path != "/control/restart")
+        if mutating:
+            if owner.lifecycle.closing:
+                return JSONResponse({"code": "host_stopping", "message": "Host stopping"}, status_code=503)
+            owner.lifecycle.mutating_requests += 1
         try:
             response = await call_next(request)
         except sqlite3.Error:
@@ -247,6 +253,9 @@ def application(owner: Host) -> FastAPI:
                 {"code": "runtime_recovering", "message": "Runtime recovering; retry the same request ID"},
                 status_code=503,
             )
+        finally:
+            if mutating:
+                owner.lifecycle.mutating_requests -= 1
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         if "content-security-policy" not in response.headers:
@@ -898,6 +907,13 @@ def application(owner: Host) -> FastAPI:
     @app.get("/control/desktop/activity")
     async def desktop_activity() -> TaskActivity:
         return await owner.task_activity()
+
+    @app.post("/control/restart")
+    async def restart(value: HostFence) -> Identity:
+        if value != owner.lifecycle.fence:
+            raise BackendError("stale_host_epoch")
+        await owner.retire_idle()
+        return owner.lifecycle.identity("stopping")
 
     @app.post("/control/shutdown")
     async def shutdown(value: HostFence) -> Identity:

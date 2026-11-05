@@ -42,6 +42,7 @@ class HostLifecycle:
         self.attached = ""
         self.stop = asyncio.Event()
         self.closing = False
+        self.mutating_requests = 0
         self.initialized = False
         self.storage_failed = False
         self.child: asyncio.subprocess.Process | None = None

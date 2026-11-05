@@ -15,15 +15,25 @@ import httpx
 from pydantic import ValidationError
 
 from amazme_backend.bootstrap.initialization import initialize
+from amazme_backend.contracts.execution import ProcessLease
 from amazme_backend.contracts.host import Health, UpdateRecord
 from amazme_backend.contracts.identity import HostReady, Identity
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.workspaces import WorkspaceGrantView
+from amazme_backend.execution.processes import exited
+from amazme_backend.platform.identity import build_id
 from amazme_backend.platform.ipc import child_command
 from amazme_backend.platform.private_files import lock
 from amazme_backend.profiles.locations import local_profile
 from amazme_backend.profiles.profile import Profile, live_host_ready
-from amazme_backend.shared.errors import BackendError
+from amazme_backend.shared.errors import BackendError, ErrorBody
+
+STARTUP_MESSAGES = {
+    "local_host_restart_required": "旧后端不支持自动重启，请先退出旧后端，再运行启动脚本。",
+    "local_host_tasks_running": "后端仍有运行中的任务，请结束任务后重新启动。",
+    "local_host_retirement_pending": "正在等待旧后端退出，请稍后重新运行启动脚本。",
+    "local_source_changed": "启动期间源码发生变化，请重新运行启动脚本。",
+}
 
 
 class LocalConnection(HostReady):
@@ -125,12 +135,44 @@ def settle_update(profile: Profile, ready: HostReady) -> HostReady:
     return current
 
 
+def retire_source(profile: Profile, ready: HostReady) -> None:
+    path = profile.path / "processes" / f"host-{ready.instance_id}.lock"
+    lease = ProcessLease.model_validate_json(path.read_bytes())
+    if (lease.instance_id, lease.role, lease.profile_path, lease.path) != (
+        ready.instance_id, "host", str(profile.path), str(path)
+    ):
+        raise BackendError("process_lease_owner_mismatch")
+    with httpx.Client(timeout=30, trust_env=False) as client:
+        response = client.post(
+            ready.url + "/control/restart", headers={"Authorization": "Bearer " + profile.token},
+            json={"host_epoch": ready.host_epoch, "build_id": ready.build_id})
+    if response.status_code == 404:
+        raise BackendError("local_host_restart_required", "请先停止旧后端，再通过启动脚本重新启动。")
+    if not response.is_success:
+        error = ErrorBody.model_validate_json(response.content)
+        raise BackendError(error.code, error.message, response.status_code)
+    identity = Identity.model_validate_json(response.content)
+    if (identity.profile_id, identity.instance_id, identity.host_epoch, identity.build_id, identity.state) != (
+        ready.profile_id, ready.instance_id, ready.host_epoch, ready.build_id, "stopping"
+    ):
+        raise BackendError("local_host_identity_mismatch")
+    deadline = time.monotonic() + 60
+    while not exited(lease):
+        if time.monotonic() >= deadline:
+            raise BackendError("local_host_retirement_pending")
+        time.sleep(0.05)
+
+
 def connect(profile_path: Path, workspace: Path) -> LocalConnection:
     with startup_lock(profile_path):
+        expected_build = build_id()
         if not profile_path.exists():
             initialize(profile_path, workspace, ProviderConfig(provider="faux", model="faux", base_url=""))
         profile = Profile(profile_path)
         ready = probe(profile)
+        if ready is not None and ready.build_id != expected_build:
+            retire_source(profile, ready)
+            ready = None
         if ready is None:
             # An explicit serve command can own the Host lock before publishing readiness.
             try:
@@ -164,6 +206,8 @@ def connect(profile_path: Path, workspace: Path) -> LocalConnection:
         if ready.state not in {"ready", "frozen"}:
             raise BackendError("local_host_not_ready")
         ready = settle_update(profile, ready)
+        if ready.build_id != expected_build or build_id() != expected_build:
+            raise BackendError("local_source_changed")
         token = (profile.path / "web.token").read_text().strip()
         with httpx.Client(timeout=30, trust_env=False) as client:
             response = client.post(ready.url + "/api/v1/workspaces/select",
@@ -208,7 +252,10 @@ def main(arguments: list[str], mode: Literal["connect", "web", "doctor"] = "conn
     except (BackendError, OSError, ValueError, httpx.HTTPError) as exc:
         # Command failures cross into Node logs; never print raw config, tokens or validation input.
         code = exc.code if isinstance(exc, BackendError) else "local_profile_invalid"
-        print(json.dumps({"code": code}), file=sys.stderr)
+        body = {"code": code}
+        if code in STARTUP_MESSAGES:
+            body["message"] = STARTUP_MESSAGES[code]
+        print(json.dumps(body, ensure_ascii=False), file=sys.stderr)
         raise SystemExit(1) from None
     if mode == "web":
         print(result.url + "/?" + urlencode({"host": result.profile_id, "workspace": result.workspace}))

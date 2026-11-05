@@ -43,9 +43,16 @@ export interface HostSupervisor {
 
 const run = promisify(execFile);
 
-function failureCode(error: unknown): string {
+function failureMessage(error: unknown): string {
     if (typeof error === "object" && error !== null && "stderr" in error && typeof error.stderr === "string") {
-        return /^\s*\{"code":\s*"([a-z][a-z0-9_]{0,127})"\}\s*$/u.exec(error.stderr)?.[1] ?? "local_host_unavailable";
+        try {
+            const value: unknown = JSON.parse(error.stderr);
+            if (typeof value === "object" && value !== null && "code" in value && typeof value.code === "string"
+                && /^[a-z][a-z0-9_]{0,127}$/u.test(value.code)) {
+                return "message" in value && typeof value.message === "string" && value.message.length > 0 && value.message.length <= 256
+                    ? value.message : value.code;
+            }
+        } catch { /* Only the connector's structured failure crosses into the startup dialog. */ }
     }
     return "local_host_unavailable";
 }
@@ -78,7 +85,7 @@ export function createHostConnection(options: {
                     connection = { ready, profilePath: value.profile_path, webToken: value.web_token, workspace: value.workspace };
                     return ready.pageUrl;
                 } catch (error: unknown) {
-                    const message = failureCode(error);
+                    const message = failureMessage(error);
                     options.onStartupFailure?.({ kind: "spawn-error", message, tail: "" });
                     throw new Error(message);
                 }
