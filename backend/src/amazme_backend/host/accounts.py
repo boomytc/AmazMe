@@ -19,7 +19,7 @@ from amazme_backend.accounts.configuration import (
 from amazme_backend.accounts.oauth.flow import BROWSER, DEVICE
 from amazme_backend.accounts.oauth.flow import Login as OAuthLogin
 from amazme_backend.accounts.store import AccountDocument, AccountStore, ApiKeyCredential
-from amazme_backend.agent.model import CATALOG, discover_models, stream
+from amazme_backend.agent.model import CATALOG, discover_models, stream, title_model_config
 from amazme_backend.ai.catalog import PROVIDERS, SELECTION_INDEX
 from amazme_backend.ai.classification.catalog import MODELS as CLASSIFIER_MODELS
 from amazme_backend.ai.classification.types import ClassifierCatalog
@@ -45,8 +45,10 @@ from amazme_backend.contracts.models import (
     ModelScopeRequest,
     ModelSelection,
     ModelSettings,
+    TitleModelUpdate,
     UpdateModelSettings,
 )
+from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.sessions import SessionModel
 from amazme_backend.host.lifecycle import HostLifecycle
 from amazme_backend.shared.errors import BackendError
@@ -275,6 +277,7 @@ class AccountOperations:
         return ModelCatalog(
             models=models,
             current=current,
+            title=self.lifecycle.profile.config.title_model,
             providers=list(definitions.values()),
             configuration_revision=document.configuration_revision,
         )
@@ -499,6 +502,43 @@ class AccountOperations:
             persisted = chosen.model_copy(update={"api_key": SecretStr("")})
             self.lifecycle.profile.save_provider(persisted, credential_revision=self.accounts.read().revision)
             return self._published_model()
+
+    async def update_title_model(self, value: TitleModelUpdate) -> ModelCatalog:
+        """Persist the session-title model, or clear it to follow the chat default. Thinking stays off."""
+        self.lifecycle.admit()
+        async with self.provider_lock:
+            self.lifecycle.profile.reload_provider()
+            if value.selection is not None:
+                title_model_config(select_model(
+                    self.lifecycle.profile.config.provider,
+                    value.selection,
+                    self.accounts.read().transports,
+                    catalog=SELECTION_INDEX,
+                    providers=PROVIDERS,
+                ))
+            await self.write_guard()
+            self.lifecycle.profile.save_title_model(value.selection)
+            return self.model_catalog()
+
+    async def title_provider(self, fallback: ProviderConfig) -> ProviderConfig:
+        """Resolve the saved selection; only an unset selection may use the exchange fallback."""
+        self.lifecycle.profile.reload_provider()
+        document = self.accounts.read()
+        selection = self.lifecycle.profile.config.title_model
+        base = self.lifecycle.profile.config.provider
+        try:
+            selected = select_model(
+                base,
+                selection,
+                document.transports,
+                catalog=SELECTION_INDEX,
+                providers=PROVIDERS,
+            )
+        except BackendError as error:
+            if selection is not None or error.code != "model_not_available":
+                raise
+            selected = select_model(fallback, None, document.transports, catalog=SELECTION_INDEX, providers=PROVIDERS)
+        return await self.accounts.configured(title_model_config(selected))
 
     async def replace_credential(self, value: CredentialUpdate) -> ModelSettings:
         """Replace or clear the stored key. A stale revision cannot overwrite a newer key."""

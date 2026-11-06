@@ -8,7 +8,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { MODEL_DEFAULTS_ACTION, REFRESH_MODELS_ACTION } from "../actions.ts";
+import { MODEL_DEFAULTS_ACTION, MODEL_TITLE_ACTION, REFRESH_MODELS_ACTION } from "../actions.ts";
 import type { DirectoryListing } from "../directories.ts";
 import { errorMessageCopy } from "../errors.ts";
 import type { Locale } from "../locale.ts";
@@ -1462,24 +1462,24 @@ function ModelConnectionsView({
 	];
 	const defaultModel = connections.state.defaults?.model;
 	const defaultReference = defaultModel === undefined ? "" : connectionModelReference(defaultModel);
+	const titleModel = connections.state.titleModel;
+	const titleReference = titleModel === null ? "" : connectionModelReference(titleModel);
 	const options: ConnectionModelLike[] = [...connections.enabledModels];
-	if (
-		defaultModel !== undefined &&
-		!options.some((model) => model.provider === defaultModel.provider && model.modelId === defaultModel.modelId)
-	) {
-		/* The saved default can be disabled after it was chosen. Keep it visible, but prefer the
+	const ensureListed = (model: { readonly provider: string; readonly modelId: string }) => {
+		if (options.some((item) => item.provider === model.provider && item.modelId === model.modelId)) return;
+		/* The saved selection can be disabled after it was chosen. Keep it visible, but prefer the
 		   catalogue's display name over the raw provider/model identifier. */
 		const known = connections.models.find(
-			(model) =>
-				model.provider === defaultModel.provider &&
-				model.modelId === defaultModel.modelId,
+			(item) => item.provider === model.provider && item.modelId === model.modelId,
 		);
 		options.unshift({
-			...defaultModel,
-			name: known?.name ?? `${defaultModel.provider}/${defaultModel.modelId}`,
+			...model,
+			name: known?.name ?? `${model.provider}/${model.modelId}`,
 			available: false,
 		});
-	}
+	};
+	if (defaultModel !== undefined) ensureListed(defaultModel);
+	if (titleModel !== null) ensureListed(titleModel);
 	const providerNames = new Map(connections.state.providers.map((provider) => [provider.id, provider.name]));
 	const modelGroups = new Map<string, ConnectionModelLike[]>();
 	for (const model of options) {
@@ -1491,6 +1491,31 @@ function ModelConnectionsView({
 	for (const model of connections.enabledModels) {
 		enabledCounts.set(model.provider, (enabledCounts.get(model.provider) ?? 0) + 1);
 	}
+	const modelOptionGroups = (keyPrefix: string) =>
+		[...modelGroups].map(([providerId, models]) => (
+			<optgroup
+				key={`${keyPrefix}:${providerId}`}
+				label={providerNames.get(providerId) ?? providerId}
+			>
+				{models.map((model) => (
+					<option
+						key={`${keyPrefix}:${connectionModelReference(model)}`}
+						value={connectionModelReference(model)}
+						disabled={!model.available || (keyPrefix === "title" && !(model.thinkingLevels ?? ["off"]).includes("off"))}
+					>
+						{model.available
+							? model.name
+							: connectionCopy(
+									locale,
+									"connections.defaultUnavailable",
+									{
+										model: model.name,
+									},
+								)}
+					</option>
+				))}
+			</optgroup>
+		));
 
 	return (
 		<div
@@ -1504,61 +1529,68 @@ function ModelConnectionsView({
 				notices={notices}
 			/>
 			<div className="connection-overview">
-				<span className="connection-default-text">
-					{connectionCopy(locale, "connections.defaultLabel")}
-				</span>
-				<div className="connection-default-controls">
-					<select
-						className="panel-select connection-default-select"
-						aria-label={connectionCopy(locale, "connections.defaultLabel")}
-						value={defaultReference}
-						disabled={connections.disabled || options.length === 0}
-						onChange={(event) => {
-							if (event.currentTarget.value.length === 0) return;
-							onAction({
-								kind: "command",
-								id: MODEL_DEFAULTS_ACTION,
-								data: event.currentTarget.value,
-							});
-						}}
-					>
-						{defaultReference.length === 0 && (
-							<option value="" disabled>
-								{connectionCopy(
-									locale,
-									options.length > 0
-										? "connections.chooseDefault"
-										: configured.length > 0
-											? "connections.noEnabledModels"
-											: "connections.noDefault",
-								)}
+				<div className="connection-overview-rows">
+					<label className="connection-overview-row">
+						<span className="connection-default-text">
+							{connectionCopy(locale, "connections.defaultLabel")}
+						</span>
+						<select
+							className="panel-select connection-default-select"
+							aria-label={connectionCopy(locale, "connections.defaultLabel")}
+							value={defaultReference}
+							disabled={connections.disabled || options.length === 0}
+							onChange={(event) => {
+								if (event.currentTarget.value.length === 0) return;
+								onAction({
+									kind: "command",
+									id: MODEL_DEFAULTS_ACTION,
+									data: event.currentTarget.value,
+								});
+							}}
+						>
+							{defaultReference.length === 0 && (
+								<option value="" disabled>
+									{connectionCopy(
+										locale,
+										options.length > 0
+											? "connections.chooseDefault"
+											: configured.length > 0
+												? "connections.noEnabledModels"
+												: "connections.noDefault",
+									)}
+								</option>
+							)}
+							{modelOptionGroups("default")}
+						</select>
+					</label>
+					<label className="connection-overview-row">
+						<span className="connection-default-text">
+							{connectionCopy(locale, "connections.titleLabel")}
+							<span className="connection-title-hint">
+								{connectionCopy(locale, "connections.titleHint")}
+							</span>
+						</span>
+						<select
+							className="panel-select connection-default-select"
+							aria-label={connectionCopy(locale, "connections.titleLabel")}
+							value={titleReference}
+							disabled={connections.disabled || options.length === 0}
+							onChange={(event) => {
+								onAction({
+									kind: "command",
+									id: MODEL_TITLE_ACTION,
+									data: event.currentTarget.value,
+								});
+							}}
+						>
+							<option value="">
+								{connectionCopy(locale, "connections.titleFollowDefault")}
 							</option>
-						)}
-						{[...modelGroups].map(([providerId, models]) => (
-							<optgroup
-								key={providerId}
-								label={providerNames.get(providerId) ?? providerId}
-							>
-								{models.map((model) => (
-									<option
-										key={connectionModelReference(model)}
-										value={connectionModelReference(model)}
-										disabled={!model.available}
-									>
-										{model.available
-											? model.name
-											: connectionCopy(
-													locale,
-													"connections.defaultUnavailable",
-													{
-														model: model.name,
-													},
-												)}
-									</option>
-								))}
-							</optgroup>
-						))}
-					</select>
+							{modelOptionGroups("title")}
+						</select>
+					</label>
+				</div>
+				<div className="connection-default-controls">
 					<PanelButtonView
 						action={refreshAction}
 						pending={panel.pending}

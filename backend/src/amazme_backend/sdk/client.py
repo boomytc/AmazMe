@@ -54,6 +54,7 @@ from amazme_backend.contracts.models import (
     ModelSelection,
     ModelSettings,
     ThinkingLevel,
+    TitleModelUpdate,
     ToolCall,
     UpdateModelSettings,
 )
@@ -238,6 +239,10 @@ class Client:
 
     async def models(self) -> ModelCatalog:
         return ModelCatalog.model_validate(await self._send("GET", "/api/v1/models"))
+
+    async def update_title_model(self, value: TitleModelUpdate) -> ModelCatalog:
+        return ModelCatalog.model_validate(await self._send("PUT", "/api/v1/models/title",
+            json_body=value.model_dump(mode="json"), headers=self._write()))
 
     async def configure_provider(self, value: ConfigureProvider) -> ProviderConfigured:
         return ProviderConfigured.model_validate(await self._send("PUT", "/api/v1/providers/" + quote(value.provider, safe=""),

@@ -3757,6 +3757,44 @@
         }
       }
     },
+    "/api/v1/models/title": {
+      "put": {
+        "summary": "Update Title Model",
+        "operationId": "update_title_model_api_v1_models_title_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TitleModelUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalog"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/accounts": {
       "get": {
         "summary": "Accounts",
@@ -10050,6 +10088,16 @@
           "current": {
             "$ref": "#/components/schemas/ModelSettings"
           },
+          "title": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "providers": {
             "items": {
               "$ref": "#/components/schemas/ProviderDefinition"
@@ -14940,6 +14988,24 @@
           "phase"
         ],
         "title": "TerminalView"
+      },
+      "TitleModelUpdate": {
+        "properties": {
+          "selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TitleModelUpdate",
+        "description": "Omit or null `selection` to follow the Host chat default for session titles."
       },
       "ToolCall": {
         "properties": {

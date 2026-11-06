@@ -45,6 +45,8 @@ export interface ModelConnectionsLike {
 		readonly authentication: ProviderAuthLike;
 		readonly enabledModelIds: readonly string[] | null;
 		readonly defaults: { readonly model: { readonly provider: string; readonly modelId: string }; readonly thinkingLevel: string } | null;
+		/** Null follows the Host chat default. Naming always runs with thinking off. */
+		readonly titleModel: { readonly provider: string; readonly modelId: string } | null;
 		readonly error: string | null;
 		readonly refresh: { readonly status: "idle" | "refreshing" | "done" | "warning"; readonly errors?: Readonly<Record<string, string>> };
 	};

@@ -80,6 +80,7 @@ from amazme_backend.contracts.models import (
     ModelScope,
     ModelScopeRequest,
     ModelSettings,
+    TitleModelUpdate,
     UpdateModelSettings,
 )
 from amazme_backend.contracts.plugins import (
@@ -603,6 +604,10 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/models")
     async def update_model(value: UpdateModelSettings) -> ModelSettings:
         return await owner.accounts.update_model(value)
+
+    @app.put("/api/v1/models/title")
+    async def update_title_model(value: TitleModelUpdate) -> ModelCatalog:
+        return await owner.accounts.update_title_model(value)
 
     @app.get("/api/v1/accounts")
     async def accounts() -> AccountsView:

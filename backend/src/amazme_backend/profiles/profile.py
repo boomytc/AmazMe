@@ -11,6 +11,7 @@ from typing import Literal
 import httpx
 
 from amazme_backend.contracts.identity import HostReady, Identity
+from amazme_backend.contracts.models import ModelSelection
 from amazme_backend.contracts.profiles import ProfileConfig, ProviderConfig
 from amazme_backend.platform.ipc import Peer
 from amazme_backend.platform.private_files import private_write
@@ -41,6 +42,15 @@ class Profile:
         raw["provider"] = {**provider.model_dump(mode="json"), "api_key": provider.api_key.get_secret_value()}
         if credential_revision is not None:
             raw["credential_revision"] = credential_revision
+        private_write(self.path / "config.json", json.dumps(raw))
+        self.reload_provider()
+
+    def save_title_model(self, selection: ModelSelection | None) -> None:
+        raw = json.loads((self.path / "config.json").read_text())
+        if selection is None:
+            raw.pop("title_model", None)
+        else:
+            raw["title_model"] = selection.model_dump(mode="json")
         private_write(self.path / "config.json", json.dumps(raw))
         self.reload_provider()
 

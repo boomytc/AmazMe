@@ -714,6 +714,7 @@ export type ModelCallUsage = {
 export type ModelCatalog = {
   "models": Array<CatalogModel>;
   "current": ModelSettings;
+  "title"?: ModelSelection | null;
   "providers"?: Array<ProviderDefinition>;
   "configuration_revision"?: number;
 };
@@ -1583,6 +1584,10 @@ export type TerminalView = {
   "input_status"?: "" | "accepted" | "unknown";
 };
 
+export type TitleModelUpdate = {
+  "selection"?: ModelSelection | null;
+};
+
 export type ToolCall = {
   "id": string;
   "name": string;
@@ -2021,6 +2026,7 @@ export interface ApiModels {
   TerminalSize: TerminalSize;
   TerminalType: TerminalType;
   TerminalView: TerminalView;
+  TitleModelUpdate: TitleModelUpdate;
   ToolCall: ToolCall;
   TranscriptMessage: TranscriptMessage;
   UpdateModelSettings: UpdateModelSettings;
@@ -2304,6 +2310,7 @@ export interface HttpOperations {
   "provider": string;
 }; query: Record<string, unknown>; body: ConfigureModel };
   "POST /api/v1/models/scope": { response: ModelScope; path: Record<string, unknown>; query: Record<string, unknown>; body: ModelScopeRequest };
+  "PUT /api/v1/models/title": { response: ModelCatalog; path: Record<string, unknown>; query: Record<string, unknown>; body: TitleModelUpdate };
   "GET /api/v1/accounts": { response: AccountsView; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/accounts/oauth": { response: OAuthView; path: Record<string, unknown>; query: Record<string, unknown>; body: OAuthStart };
   "GET /api/v1/accounts/oauth/{login_id}": { response: OAuthView; path: {

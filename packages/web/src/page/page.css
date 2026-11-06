@@ -2219,10 +2219,13 @@ body[data-sidebar-motion="width"]:not(.library-open) {
 
 .model-connections { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .model-connections .panel-head { margin-bottom: 12px; }
-.connection-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--raised); }
-.connection-default-text { margin: 0; min-width: 0; color: var(--text-2); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
-.connection-default-controls { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
-.connection-default-controls > .connection-default-select {
+.connection-overview { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--raised); }
+.connection-overview-rows { display: flex; flex-direction: column; gap: 10px; min-width: 0; flex: 1 1 280px; }
+.connection-overview-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; min-width: 0; }
+.connection-default-text { display: flex; flex-direction: column; gap: 2px; margin: 0; min-width: 0; color: var(--text-2); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.connection-title-hint { color: var(--text-3); font-size: 11px; line-height: 16px; font-weight: 400; }
+.connection-default-controls { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 0 auto; }
+.connection-overview-row > .connection-default-select {
 	flex: 0 1 auto;
 	width: auto;
 	min-width: 200px;
@@ -2277,8 +2280,10 @@ body[data-sidebar-motion="width"]:not(.library-open) {
 
 @container panel (max-width: 560px) {
 	.connection-overview { align-items: flex-start; }
+	.connection-overview-rows { flex: 1 1 100%; }
+	.connection-overview-row { width: 100%; }
+	.connection-overview-row > .connection-default-select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
 	.connection-default-controls { width: 100%; }
-	.connection-default-controls > .connection-default-select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
 	.connection-card-body { padding: 12px; }
 }
 /* Approvals, queued inputs and the command palette share a bounded block. A lone palette scrolls

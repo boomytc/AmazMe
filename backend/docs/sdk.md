@@ -43,4 +43,4 @@ SDK 只加载 HTTP 客户端和轻量数据契约；导入不会进入 Host、�
 `submit(..., model_selection=ModelSelection(provider=..., model=...))` 可固定本次模型；省略时使用会话选择。
 Host 投递、worker 接纳与子任务保存同一公开模型配置，凭据仍只在实际请求前从原账号库解析。
 
-创建会话时可省略 `title`：首轮成功回答后，后台使用该轮模型概括标题。显式标题或手动改名不会被覆盖；命名失败保留「新会话」，不会反复调用模型。
+创建会话时可省略 `title`：首轮成功回答后，后台根据首条用户消息命名（不看助手答复，避免标题偏向解决方案）。使用 `await client.update_title_model(TitleModelUpdate(selection=ModelSelection(provider=..., model=...)))` 单独选择命名模型；传 `selection=None` 跟随 Host 聊天默认，配置经 `PUT /api/v1/models/title` 保存到 profile `title_model`，通过 `(await client.models()).title` 回读。命名限制为最多 96 tokens，并关闭 thinking；不支持关闭思考的模型不可作为独立命名模型。未配置时若 Host 默认已不在目录，尝试该轮交换模型；显式选择失效时不会换用其他模型。显式标题或手动改名不会被覆盖；命名失败或无用户文本时保留「新会话」，不会反复调用模型。

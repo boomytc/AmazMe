@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field, SecretStr
 
-from amazme_backend.contracts.models import ModelOptions, ProviderApi
+from amazme_backend.contracts.models import ModelOptions, ModelSelection, ProviderApi
 from amazme_backend.contracts.sessions import ApprovalPolicy, RunOptions
 from amazme_backend.shared.model import Model
 
@@ -28,5 +28,7 @@ class ProfileConfig(Model):
     workspace: str
     user_resources: str = ""
     provider: ProviderConfig
+    # None follows the Host chat default. Title generation always runs with thinking off.
+    title_model: ModelSelection | None = None
     approval_policy: ApprovalPolicy = "mutations"
     credential_revision: int = Field(default=0, ge=0)

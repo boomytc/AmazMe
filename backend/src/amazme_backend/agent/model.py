@@ -1,5 +1,5 @@
 """Product-to-model boundary: prompts, tool selection, faux routing and public DTO validation."""
-import json
+import re
 import time
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing
@@ -10,6 +10,7 @@ from amazme_backend.agent.prompting import build_system_prompt, summary_message
 from amazme_backend.agent.tool_catalog import build_tools, wire_names
 from amazme_backend.ai import client
 from amazme_backend.ai.catalog import CATALOG as MODEL_CATALOG
+from amazme_backend.ai.reasoning import level_for
 from amazme_backend.ai.types import Auth, Completion, ModelMessage, ModelRequest, ModelSpec, RequestTransport
 from amazme_backend.ai.usage import call_usage
 from amazme_backend.contracts.mcp import McpOffer
@@ -118,18 +119,61 @@ async def summarize(config: ProviderConfig, messages: list[Message], instruction
         started_at_ms=started, first_text_at_ms=first_text, finished_at_ms=time.time_ns() // 1000000))
 
 
-async def conversation_title(config: ProviderConfig, question: str, answer: str, *, auth: Auth) -> str:
-    if config.provider == "faux":
+def _session_title_text(raw: str) -> str:
+    """Keep a short task label; MiniCPM often emits a good first line then continues as prose."""
+    text = raw.replace("\r\n", "\n").strip()
+    if "\n" in text:
+        text = text.split("\n", 1)[0].strip()
+    text = " ".join(text.split()).strip()
+    while text.startswith("#"):
+        text = text.lstrip("#").strip()
+    text = text.strip("“”\"'`*_~。．.!?！？：:")
+    text = re.split(r"[。！？!?；;]|\.\s", text, maxsplit=1)[0].strip()
+    # Commas mark prose clauses; keep bilingual labels within a sidebar-friendly span.
+    if not text or len(text) > 100 or "，" in text or "," in text:
+        return ""
+    return text
+
+
+def title_model_config(config: ProviderConfig) -> ProviderConfig:
+    title = config.model_copy(update={"max_tokens": min(config.max_tokens, 96), "thinking": "off"})
+    if level_for(model_spec(title))[1] != "off":
+        raise BackendError("model_not_available", "会话命名模型必须支持关闭思考。")
+    return title
+
+
+async def conversation_title(config: ProviderConfig, question: str, *, auth: Auth) -> str:
+    """Name a session from the first user message. The assistant reply is not used: it biases titles toward solutions."""
+    text = question.strip()
+    if config.provider == "faux" or not text:
         # The deterministic provider has no language model.
         return ""
+    # Keep title calls small, but MiniCPM may hit length before stop; retain streamed text.
+    title_config = title_model_config(config)
     request = ModelRequest(
-        system_prompt="根据所给首轮对话概括主题，使用用户的语言，只输出一个简短的单行标题。不要回答问题、加引号或前缀。",
-        messages=[ModelMessage(role="user", content=json.dumps(
-            {"user": question[:4096], "assistant": answer[:4096]}, ensure_ascii=False,
+        system_prompt=(
+            "你是会话标题器。只输出一行短标题，抓住用户想做的事，沿用用户的语言。"
+            "中文尽量不超过32字，英文约3至12词，最多100字符。"
+            "禁止回答用户问题、写故事、解释、markdown、引号、标题前缀或第二行。"
+        ),
+        messages=[ModelMessage(role="user", content=(
+            "用户：写一个500字的小说，科幻风格\n"
+            "标题：科幻小说编写\n"
+            "用户：登录按钮点了没反应，帮我查前端\n"
+            "标题：登录按钮无响应\n"
+            f"用户：{text[:2000]}\n"
+            "标题："
         ))],
     )
-    async with aclosing(client.stream(model_spec(config), request, auth, transport=model_transport(config))) as response:
-        async for item in response:
-            if not isinstance(item, str) and not item.message.tool_calls:
-                return " ".join(item.message.content.split()).strip('“”"')[:100].strip()
-    return ""
+    streamed = ""
+    try:
+        async with aclosing(client.stream(model_spec(title_config), request, auth, transport=model_transport(title_config))) as response:
+            async for item in response:
+                if isinstance(item, str):
+                    streamed += item
+                elif not item.message.tool_calls:
+                    return _session_title_text(item.message.content or streamed)
+    except BackendError as error:
+        if error.code != "model_incomplete" or error.message != "length":
+            raise
+    return _session_title_text(streamed)

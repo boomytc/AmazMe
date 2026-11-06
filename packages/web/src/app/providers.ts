@@ -243,6 +243,9 @@ export class Providers {
 							thinkingLevel: current.thinking ?? "off",
 						}
 					: null,
+				titleModel: this.catalog?.title
+					? { provider: this.catalog.title.provider, modelId: this.catalog.title.model }
+					: null,
 				error: null,
 				refresh: { status: "idle" },
 			},

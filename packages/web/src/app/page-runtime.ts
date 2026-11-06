@@ -1975,6 +1975,27 @@ export class PageRuntime {
 			await this.loadGlobal();
 			return;
 		}
+		if (id === A.MODEL_TITLE_ACTION) {
+			const identity = this.client.identity;
+			if (!identity || !this.providers.catalog) throw new Error("请先连接后端");
+			const selection = data
+				? (() => {
+						const selected = modelReference(data);
+						const model = this.providers.catalog.models.find(
+							(item) =>
+								item.provider === selected.provider && item.model === selected.model,
+						);
+						if (!model) throw new Error("模型不可用");
+						return { provider: selected.provider, model: selected.model };
+					})()
+				: null;
+			await this.client.call("PUT /api/v1/models/title", {
+				body: parseContract("TitleModelUpdate", { selection }),
+				identity,
+			});
+			await this.loadGlobal();
+			return;
+		}
 		if (id === PROVIDER_SELECT_ACTION) {
 			this.providers.selectedProvider = data;
 			this.render();

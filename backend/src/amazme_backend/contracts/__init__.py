@@ -151,6 +151,7 @@ from amazme_backend.contracts.models import ProviderApi as ProviderApi
 from amazme_backend.contracts.models import ProviderDefinition as ProviderDefinition
 from amazme_backend.contracts.models import ScopedModel as ScopedModel
 from amazme_backend.contracts.models import ThinkingLevel as ThinkingLevel
+from amazme_backend.contracts.models import TitleModelUpdate as TitleModelUpdate
 from amazme_backend.contracts.models import ToolCall as ToolCall
 from amazme_backend.contracts.models import UpdateModelSettings as UpdateModelSettings
 from amazme_backend.contracts.models import checked_images as checked_images

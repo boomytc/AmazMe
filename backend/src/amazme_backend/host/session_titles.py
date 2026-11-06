@@ -1,4 +1,4 @@
-"""Generate a title from the first completed exchange without delaying conversation delivery."""
+"""Generate a title from the first user message after the first exchange settles, without delaying delivery."""
 import asyncio
 import logging
 
@@ -37,10 +37,12 @@ class SessionTitles:
     async def generate(self, session: str, provider: ProviderConfig, receipt: Receipt) -> None:
         try:
             title = ""
-            if not contains_secret(receipt.text + "\n" + receipt.answer, self.accounts.secrets()):
+            question = receipt.text.strip()
+            if question and not contains_secret(question, self.accounts.secrets()):
                 async with self.capacity, asyncio.timeout(60):
-                    config = await self.accounts.accounts.configured(provider)
-                    title = await conversation_title(config, receipt.text, receipt.answer,
+                    # Prefer the profile title model; thinking stays off even if chat default enables it.
+                    config = await self.accounts.title_provider(provider)
+                    title = await conversation_title(config, question,
                         auth=Auth(api_key=config.api_key, auth_type=config.auth_type, headers=request_identity(config.provider)))
                 if contains_secret(title, self.accounts.secrets()):
                     title = ""

@@ -3752,6 +3752,16 @@
         "current": {
           "$ref": "#/components/schemas/ModelSettings"
         },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModelSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "providers": {
           "items": {
             "$ref": "#/components/schemas/ProviderDefinition"
@@ -8644,6 +8654,24 @@
       ],
       "title": "TerminalView"
     },
+    "TitleModelUpdate": {
+      "properties": {
+        "selection": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModelSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "TitleModelUpdate",
+      "description": "Omit or null `selection` to follow the Host chat default for session titles."
+    },
     "ToolCall": {
       "additionalProperties": false,
       "properties": {
@@ -10656,6 +10684,14 @@
       },
       "body": {
         "$ref": "#/components/schemas/ModelScopeRequest"
+      }
+    },
+    "PUT /api/v1/models/title": {
+      "response": {
+        "$ref": "#/components/schemas/ModelCatalog"
+      },
+      "body": {
+        "$ref": "#/components/schemas/TitleModelUpdate"
       }
     },
     "GET /api/v1/accounts": {

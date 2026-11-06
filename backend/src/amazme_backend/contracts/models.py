@@ -112,8 +112,16 @@ class ProviderDefinition(ProviderConnection):
 class ModelCatalog(Model):
     models: list[CatalogModel]
     current: ModelSettings
+    # None means session titles follow `current`. Thinking is always off for naming.
+    title: ModelSelection | None = None
     providers: list[ProviderDefinition] = Field(default_factory=lambda: list[ProviderDefinition]())
     configuration_revision: int = 0
+
+
+class TitleModelUpdate(Model):
+    """Omit or null `selection` to follow the Host chat default for session titles."""
+
+    selection: ModelSelection | None = None
 
 
 class ScopedModel(Model):
