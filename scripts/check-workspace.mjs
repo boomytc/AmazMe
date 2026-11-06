@@ -67,7 +67,7 @@ function moduleScopeAwaits(source) {
 	return found;
 }
 
-/** Direct registry dependencies stay exact; workspace dependencies also match their release version. */
+/** Direct registry dependencies stay exact. A workspace specifier must match the target package's own manifest version. */
 export function checkDependencyVersions(repoRoot, packages = workspacePackages(repoRoot)) {
 	const files = [];
 	const rootManifest = join(repoRoot, "package.json");
@@ -93,7 +93,7 @@ export function checkDependencyVersions(repoRoot, packages = workspacePackages(r
 				if (!exact.test(version)) failures.push(`${location} must be pinned, found ${specifier}`);
 				else if (!alias && packages.has(name) && version !== packages.get(name).manifest.version)
 					failures.push(
-						`${location} must match workspace version ${packages.get(name).manifest.version}, found ${version}`,
+						`${location} must match the target package's manifest version ${packages.get(name).manifest.version}, found ${version}`,
 					);
 			}
 		}
@@ -101,26 +101,15 @@ export function checkDependencyVersions(repoRoot, packages = workspacePackages(r
 	return failures;
 }
 
-export function checkProductVersions(repoRoot, packages = workspacePackages(repoRoot)) {
+export function checkPrivateWorkspaces(repoRoot, packages = workspacePackages(repoRoot)) {
 	const manifest = join(repoRoot, "package.json");
 	if (!existsSync(manifest)) return [];
 	const product = JSON.parse(readFileSync(manifest, "utf8"));
-	const version = product.version;
-	if (typeof version !== "string") return [];
 	const failures = [];
 	if (product.private !== true) failures.push("package.json: personal-use workspace must be private");
 	for (const [name, pkg] of packages) {
 		if (pkg.manifest.private !== true)
 			failures.push(`${name}: personal-use workspace must be private`);
-		if (pkg.manifest.version !== version)
-			failures.push(`${name}: product version must match root ${version}, found ${pkg.manifest.version}`);
-	}
-	const backend = join(repoRoot, "backend/pyproject.toml");
-	if (existsSync(backend)) {
-		const project = readFileSync(backend, "utf8").split(/^\[project\]\s*$/m)[1]?.split(/^\[/m)[0];
-		const backendVersion = project?.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
-		if (backendVersion !== version)
-			failures.push(`backend/pyproject.toml: product version must match root ${version}, found ${backendVersion}`);
 	}
 	return failures;
 }
@@ -158,59 +147,6 @@ export function checkBuildConfigs(repoRoot) {
 			file = parent === undefined ? undefined : resolve(dirname(file), parent);
 			if (file !== undefined && !existsSync(file)) file = undefined;
 		}
-	}
-	return failures;
-}
-
-/** Hand-written text the release-version rule reads. Generated data and binaries are not scanned. */
-const versionLiteralExtensions = /\.(?:[cm]?[jt]sx?|md|ya?ml|sh|html|css|swift|m|rs|txt)$/;
-/** Files that own the version or record history: the version lives in package.json, releases in changelogs. */
-const versionLiteralOwners = /(?:^|\/)(?:package\.json|package-lock\.json|CHANGELOG\.md)$/;
-/**
- * Third-party products whose own versions may coincide with the release number. A match directly after
- * one of these words is that product's version, not AmazMe's.
- */
-const versionLiteralThirdParty = ["Bun"];
-/** A version pinned to an external scoped package, such as `@scope/tool@1.2.3`, is that package's version. */
-const versionLiteralScopedPackage = /@[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*@$/;
-
-function trackedFiles(repoRoot) {
-	return execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
-		.split("\0")
-		.filter(Boolean);
-}
-
-/**
- * The release version is written only in package.json and changelogs. Code reads it from package.json
- * and docs point to the manifest, so a bump never leaves a stale copy behind. `files` are repo-relative paths; the default is every file git tracks.
- */
-export function checkVersionLiterals(repoRoot, files) {
-	const failures = [];
-	const manifest = join(repoRoot, "package.json");
-	if (!existsSync(manifest)) return failures;
-	const version = JSON.parse(readFileSync(manifest, "utf8")).version;
-	if (typeof version !== "string" || version === "") return failures;
-	files ??= trackedFiles(repoRoot);
-	const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	const literal = new RegExp(`(?<![\\d.])${escaped}(?!\\.?\\d)`, "g");
-	const thirdParty = new RegExp(`\\b(?:${versionLiteralThirdParty.join("|")})\\s+$`);
-	for (const file of files) {
-		const path = file.replaceAll("\\", "/");
-		if (!versionLiteralExtensions.test(path) || versionLiteralOwners.test(path)) continue;
-		if (path.split("/").some((part) => part === "node_modules" || part === "dist")) continue;
-		const absolute = join(repoRoot, path);
-		if (!existsSync(absolute)) continue;
-		readFileSync(absolute, "utf8")
-			.split("\n")
-			.forEach((line, index) => {
-				for (const match of line.matchAll(literal)) {
-					const before = line.slice(0, match.index);
-					if (thirdParty.test(before) || versionLiteralScopedPackage.test(before)) continue;
-					failures.push(
-						`${path}:${index + 1}: release version ${version} is hand-written; read it from package.json or link the releases`,
-					);
-				}
-			});
 	}
 	return failures;
 }
@@ -344,10 +280,9 @@ export function checkSourceContracts(repoRoot) {
 	const failures = [
 		...checkDevelopmentAssets(root),
 		...checkDependencyVersions(root, packages),
-		...checkProductVersions(root, packages),
+		...checkPrivateWorkspaces(root, packages),
 		...checkBuildConfigs(root),
 		...checkTempDirUsage(root),
-		...checkVersionLiterals(root),
 	];
 	try {
 		runtimePackages(packages, [...packages.keys()]);
@@ -608,6 +543,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	if (failures.length + entries.failures.length > 0) process.exitCode = 1;
 	else
 		console.log(
-			"Workspace imports, runtime dependencies, direction, browser entries, private workspaces, build configs, development assets, source temp dirs, and version literals passed.",
+			"Workspace imports, runtime dependencies, direction, browser entries, private workspaces, build configs, development assets, and source temp dirs passed.",
 		);
 }

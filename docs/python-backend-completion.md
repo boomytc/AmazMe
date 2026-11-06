@@ -1,6 +1,6 @@
 # 当前实现与验证入口
 
-产品版本见 [根清单](../package.json)，执行契约见[本机方案](python-backend-plan.md)，模块职责见[后端架构](../backend/ARCHITECTURE.md)，客户端依赖见[依赖清单](python-backend-ts-deps.md)。这些入口描述当前源码，不沿用迁移阶段的完成声明。
+执行契约见[本机方案](python-backend-plan.md)，模块职责见[后端架构](../backend/ARCHITECTURE.md)，客户端依赖见[依赖清单](python-backend-ts-deps.md)。这些入口描述当前源码，不沿用迁移阶段的完成声明。
 
 ## 当前实现
 

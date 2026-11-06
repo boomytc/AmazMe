@@ -92,7 +92,7 @@ def main() -> None:
             parser.error("init requires --workspace and --provider-config")
         provider = ProviderConfig.model_validate_json(args.provider_config.read_bytes())
         initialize(args.profile, args.workspace, provider, approval=args.approval_policy)
-        print(json.dumps({"profile": str(args.profile), "workspace": str(args.workspace.resolve()), "version": "0.1.0"}))
+        print(json.dumps({"profile": str(args.profile), "workspace": str(args.workspace.resolve())}))
         return
     profile = Profile(args.profile)
     if args.mode == "serve":

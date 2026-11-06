@@ -914,7 +914,6 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 		applyTypography(document.documentElement.style, typography);
 		document.title = windowTitle({
 			appName: presentation.app.name,
-			version: presentation.app.version,
 			sessionName: pageTitle,
 			pendingCount,
 		});

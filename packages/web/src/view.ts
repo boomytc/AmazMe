@@ -748,20 +748,19 @@ function titleSessionName(name: string): string {
 }
 
 /**
- * The window title. No attached session keeps the product and its version. An attached session
- * uses the display name the roster already shows: `(n) <name> — <app>` while the header's
- * approval indicator reports n > 0, and `<name> — <app>` once that count is back to none.
+ * The window title. No session name returns the app name.
+ * A session uses the roster display name and the app name, with `(n) ` in front while
+ * the approval indicator count is above zero.
  */
 export function windowTitle(input: {
 	readonly appName: string;
-	readonly version: string;
 	/** `sessionLabel`: the display name the roster shows, or the untitled label when `/name` has not set one. */
 	readonly sessionName: string | undefined;
 	/** `approvalIndicator.count`, or 0 when the indicator is absent. */
 	readonly pendingCount: number;
 }): string {
 	if (input.sessionName === undefined || input.sessionName.length === 0) {
-		return `${input.appName} ${input.version}`;
+		return input.appName;
 	}
 	const sessionName = titleSessionName(input.sessionName);
 	if (Number.isInteger(input.pendingCount) && input.pendingCount > 0) {

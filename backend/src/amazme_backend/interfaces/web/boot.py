@@ -24,7 +24,7 @@ def transport_url(origin: str) -> str:
 
 def boot_manifest(identity: Identity, origin: str, preferences: InterfacePreferences | None = None) -> dict[str, object]:
     return {
-        "app": {"name": "AmazMe", "version": identity.version},
+        "app": {"name": "AmazMe"},
         "mode": "source",
         "protocol": identity.protocol,
         "server": {"id": identity.profile_id},
@@ -38,7 +38,7 @@ def boot_script_source(manifest: dict[str, object]) -> str:
     payload = payload.replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
     return (
         "globalThis.__AMAZME_BOOT__=" + payload + ";"
-        "document.title=globalThis.__AMAZME_BOOT__.app.name+\" \"+globalThis.__AMAZME_BOOT__.app.version;"
+        "document.title=globalThis.__AMAZME_BOOT__.app.name;"
     )
 
 

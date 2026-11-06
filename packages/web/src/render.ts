@@ -9,10 +9,8 @@ import type { PanelAction } from "./panels.ts";
 import type { ShortcutId } from "./shortcuts.ts";
 import type { WebView } from "./view.ts";
 
-/** The Python page entry identifies itself by name and version. */
 export interface WindowApp {
 	readonly name: string;
-	readonly version: string;
 }
 
 /** Host diagnostics may be literal; connection status copy follows the current locale. */

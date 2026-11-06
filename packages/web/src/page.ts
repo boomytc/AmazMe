@@ -19,10 +19,9 @@ function startWindow(): void {
 	const app =
 		isRecord(boot) &&
 		isRecord(boot.app) &&
-		typeof boot.app.name === "string" &&
-		typeof boot.app.version === "string"
-			? { name: boot.app.name, version: boot.app.version }
-			: { name: "AmazMe", version: "" };
+		typeof boot.app.name === "string"
+			? { name: boot.app.name }
+			: { name: "AmazMe" };
 	const container = document.getElementById("amazme-root");
 	if (!container) throw new Error("页面挂载入口不可用，请重新打开 AmazMe。");
 	const presentation = new Presentation(app);

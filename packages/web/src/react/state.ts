@@ -226,7 +226,7 @@ export class Presentation implements PageRenderer {
 		};
 	readonly pickDirectories: NonNullable<PageRenderer["onPickDirectories"]> =
 		async () => this.onPickDirectories?.();
-	constructor(app: WindowApp = { name: "AmazMe", version: "" }) {
+	constructor(app: WindowApp = { name: "AmazMe" }) {
 		this.app = app;
 	}
 	get view(): WebView | undefined {

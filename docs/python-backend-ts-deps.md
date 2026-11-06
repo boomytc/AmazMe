@@ -16,4 +16,4 @@ Python SDK 的正式入口是 `amazme_backend.sdk.Client`，参数使用 `amazme
 
 workspace 依赖闭包由 `scripts/workspace-packages.mjs` 管理。Python 源码、gate、helper、快照及静态资源的定位统一在 `backend/src/amazme_backend/platform/resource_manifest.py`。启动脚本编译所需依赖后直接运行本机 Python 与 Electron，不生成安装包。
 
-`npm run check:workspace` 同时检查 TypeScript 依赖方向、产品版本与 Python [模块清单](../backend/architecture.json)。完整所有权和调用路径见[后端架构](../backend/ARCHITECTURE.md)。
+`npm run check:workspace` 同时检查 TypeScript 依赖方向、私有清单、依赖精确版本与 Python [模块清单](../backend/architecture.json)。完整所有权和调用路径见[后端架构](../backend/ARCHITECTURE.md)。

@@ -42,7 +42,6 @@ const SMOKE_EXPRESSION = `({
 	title: document.title,
 	boot: globalThis.__AMAZME_BOOT__ != null && typeof globalThis.__AMAZME_BOOT__ === "object",
 	name: globalThis.__AMAZME_BOOT__ && globalThis.__AMAZME_BOOT__.app && globalThis.__AMAZME_BOOT__.app.name,
-	version: globalThis.__AMAZME_BOOT__ && globalThis.__AMAZME_BOOT__.app && globalThis.__AMAZME_BOOT__.app.version,
 	mode: globalThis.__AMAZME_BOOT__ && globalThis.__AMAZME_BOOT__.mode,
 	serverId: globalThis.__AMAZME_BOOT__ && globalThis.__AMAZME_BOOT__.server && globalThis.__AMAZME_BOOT__.server.id,
 	language: document.documentElement.lang,

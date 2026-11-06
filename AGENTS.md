@@ -44,7 +44,7 @@ npm run build --workspace <name>
 npm run typecheck
 ```
 
-`npm run check:workspace` 覆盖版本号、临时目录、依赖方向、构建入口和测试资产残留。推送前使用当前改动的检查结果；有新改动或失败时再重跑受影响部分。
+`npm run check:workspace` 覆盖私有清单、依赖精确版本、临时目录、依赖方向、构建入口和测试资产残留。推送前使用当前改动的检查结果；有新改动或失败时再重跑受影响部分。
 
 不要主动跑根目录完整 `npm run build`。`npm install` 用 `--ignore-scripts`。
 
@@ -63,7 +63,7 @@ npm run typecheck
 - 保留运行必需的 TypeScript、页面和 helper 编译，以及类型、依赖和资源检查。启动脚本按源码与产物指纹自动编译所需 workspace。
 - 产品仅供个人源码运行，不分发、不打包，不生成独立应用、DMG 或冻结 Python 后端，不复制或签名 Electron 应用缓存，不执行公证、标签、GitHub Release 或安装包更新。
 - 不维护旧内容迁移、退休字段或旧入口兼容。
-- 版本仍记录在 `package.json` 和 `CHANGELOG.md`。不新增 `.github/workflows`。
+- 清单 `version` 只供 npm 和 hatchling 解析依赖。`CHANGELOG.md` 按日期记录变更。不新增 `.github/workflows`。
 
 ## 分支
 
