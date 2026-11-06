@@ -4,7 +4,7 @@ import { isDockTabId, type DockTabId } from "../dock.ts";
 const KEY_PREFIX = "amazme.dock-layout:";
 
 /** The panel a session's dock starts on, and the one closing the last tab falls back to. */
-const DEFAULT_TAB: DockTabId = "conversations";
+const DEFAULT_TAB = "guide" satisfies DockTabId;
 
 /**
  * One session's dock arrangement: whether the column is open, its tab set, and the selected tab.
@@ -37,15 +37,8 @@ export class DockLayout {
 			)
 				return;
 			if (!Array.isArray(saved.tabs) || typeof saved.open !== "boolean") return;
-			/* A layout written before the tool menu replaced the guide names that empty tab. */
-			const tabs = [
-				...new Set(
-					saved.tabs
-						.map((tab) => (tab === "guide" ? DEFAULT_TAB : tab))
-						.filter(isDockTabId),
-				),
-			];
-			const active = saved.active === "guide" ? DEFAULT_TAB : saved.active;
+			const tabs = [...new Set(saved.tabs.filter(isDockTabId))];
+			const active = saved.active;
 			if (
 				tabs.length === 0 ||
 				!isDockTabId(active) ||
@@ -74,14 +67,19 @@ export class DockLayout {
 		this.save();
 	}
 	openTab(id: DockTabId): void {
-		if (!this.ids.includes(id)) this.ids = [...this.ids, id];
+		const alreadyOpen = this.ids.includes(id);
+		if (this.selected === DEFAULT_TAB && id !== DEFAULT_TAB) {
+			this.ids = this.ids.flatMap((tab) =>
+				tab === DEFAULT_TAB ? (alreadyOpen ? [] : [id]) : [tab],
+			);
+		} else if (!alreadyOpen) this.ids = [...this.ids, id];
 		this.selected = id;
 		this.save();
 	}
 	/** Closing the last tab collapses the column; reopening starts from the default panel. */
 	close(id: DockTabId): void {
 		const index = this.ids.indexOf(id);
-		if (index < 0) return;
+		if (index < 0 || (id === DEFAULT_TAB && this.ids.length === 1)) return;
 		const remaining = this.ids.filter((tab) => tab !== id);
 		if (remaining.length === 0) {
 			this.ids = [DEFAULT_TAB];

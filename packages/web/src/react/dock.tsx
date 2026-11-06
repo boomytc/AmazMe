@@ -12,8 +12,6 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { createPortal } from "react-dom";
-import { useAnchoredPopover } from "./anchored-popover.ts";
 import { DOCK_TAB_ACTION, DOCK_TAB_CLOSE_ACTION, DOCK_TOGGLE_ACTION, WORKSPACE_OPEN_ACTION } from "../actions.ts";
 import { readDockWidth, storeDockWidth } from "../app/dock-preferences.ts";
 import type { DockTab, DockTabId, DockView } from "../dock.ts";
@@ -52,6 +50,7 @@ type DockIconName =
 	| "arrow-up"
 	| "check"
 	| "chevron-down"
+	| "compass"
 	| "copy"
 	| "file"
 	| "folder"
@@ -102,6 +101,7 @@ export interface DockProps {
 }
 
 const DOCK_ICONS: Readonly<Record<DockTabId, DockIconName>> = {
+	guide: "compass",
 	files: "folder",
 	terminal: "terminal",
 	jobs: "activity",
@@ -1724,128 +1724,26 @@ function DockPtySurface({
 	);
 }
 
-interface DockTabMenuProps {
-	/** Every tool the menu offers. */
+/** The new tab is a doorway: choosing a tool replaces it or selects the tool's existing tab. */
+function DockGuide({ tabs, onOpenTab }: {
 	readonly tabs: readonly DockTab[];
-	/** The tools that already own a tab; the menu checks these, not only the selected one. */
-	readonly openTabs: readonly DockTabId[];
-	readonly active: DockTabId | undefined;
-	readonly locale: Locale;
 	readonly onOpenTab: (id: DockTabId) => void;
-}
-
-/**
- * The strip's plus opens the tool list: picking a tool opens its tab, and a tool that is already
- * open is selected instead. No empty picker tab is created in between. A checked row means the
- * tool already has a tab; the selected tab is marked separately with `aria-current` so the two
- * states never share one glyph.
- */
-function DockTabMenu({ tabs, openTabs, active, locale, onOpenTab }: DockTabMenuProps) {
-	const [open, setOpen] = useState(false);
-	const trigger = useRef<HTMLButtonElement>(null);
-	const menu = useRef<HTMLDivElement>(null);
-	useAnchoredPopover(open, trigger, menu, "bottom-end");
-	useEffect(() => {
-		if (!open) return;
-		const closeOutside = (event: MouseEvent): void => {
-			if (
-				event.target instanceof Node &&
-				!menu.current?.contains(event.target) &&
-				!trigger.current?.contains(event.target)
-			)
-				setOpen(false);
-		};
-		const closeOnEscape = (event: globalThis.KeyboardEvent): void => {
-			if (event.key !== "Escape" || event.isComposing) return;
-			event.preventDefault();
-			setOpen(false);
-			trigger.current?.focus();
-		};
-		document.addEventListener("mousedown", closeOutside);
-		document.addEventListener("keydown", closeOnEscape);
-		menu.current
-			?.querySelector<HTMLButtonElement>("[role=menuitem]")
-			?.focus();
-		return () => {
-			document.removeEventListener("mousedown", closeOutside);
-			document.removeEventListener("keydown", closeOnEscape);
-		};
-	}, [open]);
-	const label = translate(locale, "dock.newTab");
-	const close = (): void => {
-		setOpen(false);
-		trigger.current?.focus();
-	};
-	const moveItem = (event: KeyboardEvent<HTMLDivElement>): void => {
-		if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-		event.preventDefault();
-		const items = [
-			...(menu.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]") ??
-				[]),
-		];
-		const index = items.indexOf(document.activeElement as HTMLButtonElement);
-		const step = event.key === "ArrowDown" ? 1 : -1;
-		items[(index + step + items.length) % items.length]?.focus();
-	};
-	const opened = new Set<DockTabId>(openTabs);
+}): ReactElement {
 	return (
-		<span className="dock-add-tab-wrap">
-			<button
-				ref={trigger}
-				type="button"
-				className="icon-button icon-button--compact dock-add-tab"
-				aria-label={label}
-				title={label}
-				aria-haspopup="menu"
-				aria-expanded={open}
-				onClick={() => setOpen((current) => !current)}
-				onKeyDown={(event) => {
-					if (event.key !== "ArrowDown") return;
-					event.preventDefault();
-					setOpen(true);
-				}}
-			>
-				<Icon name="plus" />
-			</button>
-			{open
-				? createPortal(
-						<div
-							ref={menu}
-							className="dock-tab-menu"
-							role="menu"
-							aria-label={label}
-							onKeyDown={(event) => {
-								moveItem(event);
-								if (event.key !== "Escape" || event.nativeEvent.isComposing)
-									return;
-								event.preventDefault();
-								close();
-							}}
-						>
-							{tabs.map((tab) => (
-								<button
-									key={tab.id}
-									type="button"
-									role="menuitem"
-									className="dock-tab-menu-item"
-									aria-current={tab.id === active ? "true" : undefined}
-									onClick={() => {
-										close();
-										onOpenTab(tab.id);
-									}}
-								>
-									<Icon name={DOCK_ICONS[tab.id]} className="icon" />
-									<span>{tab.label}</span>
-									{opened.has(tab.id) ? (
-										<Icon name="check" className="icon dock-tab-menu-check" />
-									) : null}
-								</button>
-							))}
-						</div>,
-						document.body,
-					)
-				: null}
-		</span>
+		<div className="dock-guide" data-panel-id="guide">
+			<Icon name="compass" className="icon dock-guide-hero" />
+			{tabs.map((tab) => (
+				<button
+					key={tab.id}
+					type="button"
+					className="dock-guide-entry"
+					onClick={() => onOpenTab(tab.id)}
+				>
+					<Icon name={DOCK_ICONS[tab.id]} />
+					<span>{tab.label}</span>
+				</button>
+			))}
+		</div>
 	);
 }
 
@@ -2231,25 +2129,25 @@ export function Dock({
 										{tab.label}
 									</span>
 								</button>
-								<button
+								{tab.id === "guide" && view.tabs.length === 1 ? null : <button
 									type="button"
 									className="dock-tab-close"
 									tabIndex={tab.active ? 0 : -1}
 									aria-label={translate(locale, tab.id === "terminal" ? "dock.closeTerminalTab" : "dock.closeTab", { name: tab.label })}
 									title={translate(locale, tab.id === "terminal" ? "dock.closeTerminalTab" : "dock.closeTab", { name: tab.label })}
 									onClick={() => closeTab(tab.id)}
-								><Icon name="x" /></button>
+								><Icon name="x" /></button>}
 							</div>
 						</Fragment>
 					))}
 				</div>
-				<DockTabMenu
-					tabs={view.availableTabs}
-					openTabs={view.tabs.map((tab) => tab.id)}
-					active={active}
-					locale={locale}
-					onOpenTab={openTab}
-				/>
+				<button
+					type="button"
+					className="icon-button icon-button--compact dock-add-tab"
+					aria-label={translate(locale, "dock.newTab")}
+					title={translate(locale, "dock.newTab")}
+					onClick={() => openTab("guide")}
+				><Icon name="plus" /></button>
 				<span className="dock-strip-fill" />
 				{stripActions.length === 0 ? null : (
 					<div className="dock-chrome">
@@ -2329,7 +2227,11 @@ export function Dock({
 							/>
 						</div>
 					) : null}
-					{view.pty === undefined ? (
+					{active === "guide" ? (
+						<div className="dock-scroll">
+							<DockGuide tabs={view.availableTabs} onOpenTab={openTab} />
+						</div>
+					) : view.pty === undefined ? (
 						<div className="dock-scroll">
 							{panel.description === undefined ? null : (
 								<p className="dock-panel-desc">

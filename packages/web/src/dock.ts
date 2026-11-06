@@ -4,7 +4,7 @@
  * and the terminal's own screen — so the renderer treats them alike, and a new dock tab is another
  * pure builder here.
  *
- * The tab menu lists available tools; the workspace controller owns which tabs are open and selected.
+ * The guide lists available tools; the workspace controller owns which tabs are open and selected.
  */
 import {
 	CONVERSATION_FORK_ACTION,
@@ -32,11 +32,12 @@ import type { PtyPresentation } from "./pty-surface.ts";
 import type { UsageReport } from "./generated/contracts.ts";
 import { usagePanel } from "./usage.ts";
 
-/** Tool kinds shared by state, projection, and rendering. A tool is opened from the tab menu. */
-export type DockTabId = "files" | "terminal" | "jobs" | "conversations" | "tasks" | "changes" | "statistics";
+/** Page kinds shared by state, projection, and rendering. Tools are opened from the guide. */
+export type DockTabId = "guide" | "files" | "terminal" | "jobs" | "conversations" | "tasks" | "changes" | "statistics";
 
 const TAB_IDS: readonly DockTabId[] = ["files", "terminal", "jobs", "conversations", "tasks", "statistics"];
 const TAB_MESSAGES: Readonly<Record<DockTabId, MessageKey>> = {
+	guide: "dock.newTab",
 	files: "dock.files",
 	terminal: "dock.terminal",
 	jobs: "dock.jobs",
@@ -740,7 +741,9 @@ export function terminalPanel(
 export function dockView(locale: Locale, input: DockViewInput): DockView {
 	const tab = input.tab;
 	const panel =
-		tab === "files"
+		tab === "guide"
+			? { id: "guide", title: translate(locale, "dock.newTab"), notices: [], groups: [] }
+			: tab === "files"
 			? filesPanel(locale, input.workspace, input.readOnly === true)
 			: tab === "terminal"
 				? terminalPanel(locale, { cwd: input.cwd, readOnly: input.readOnly === true })
