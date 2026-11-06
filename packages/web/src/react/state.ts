@@ -39,9 +39,7 @@ export type ShellView = Pick<
 	WebView,
 	| "locale"
 	| "typography"
-	| "roster"
-	| "projects"
-	| "archivedAttached"
+	| "sidebar"
 	| "rosterFilter"
 	| "newSession"
 	| "transcriptScope"
@@ -101,9 +99,7 @@ export class Presentation implements PageRenderer {
 		fields<ShellView>([
 			"locale",
 			"typography",
-			"roster",
-			"projects",
-			"archivedAttached",
+			"sidebar",
 			"rosterFilter",
 			"newSession",
 			"transcriptScope",
@@ -136,11 +132,10 @@ export class Presentation implements PageRenderer {
 			"history",
 			"status",
 			"busy",
-			"roster",
+			"sidebar",
 			"rosterFilter",
 			"newSession",
 			"sessionDraft",
-			"archivedAttached",
 			"model",
 			"empty",
 		]),
@@ -204,6 +199,7 @@ export class Presentation implements PageRenderer {
 	onSelectPermission: PageRenderer["onSelectPermission"] = () => {};
 	onAttachFiles: PageRenderer["onAttachFiles"] = () => {};
 	onFilterRoster: PageRenderer["onFilterRoster"] = () => {};
+	onRevealProjects: PageRenderer["onRevealProjects"] = () => {};
 	onShortcut: PageRenderer["onShortcut"] = () => {};
 	onPaletteSelection: PageRenderer["onPaletteSelection"] = () => {};
 	onDraftChange: PageRenderer["onDraftChange"] = () => {};

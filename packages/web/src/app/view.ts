@@ -6,7 +6,7 @@ import type { Locale } from "../locale.ts";
 import type { ApprovalPolicy } from "../permission-picker.ts";
 import type { ModelConnectionsLike } from "../model-connections.ts";
 import type { PanelView } from "../panels.ts";
-import { projectGroups } from "../projects.ts";
+import { sidebarDocument } from "../sidebar.ts";
 import { isRecord, parseContract } from "../transport/api.ts";
 import type { ClientConnection } from "../transport/client.ts";
 import type { AnswerFeedbackList, HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, ToolResult, TranscriptMessage, UsageReport, WorkspaceGrantView } from "../generated/contracts.ts";
@@ -16,7 +16,7 @@ import { translate } from "../strings.ts";
 import { toolArguments } from "../tool-args.ts";
 import { gitReviewSummary, toolResultView } from "../tool-results.ts";
 import type { Typography } from "../typography.ts";
-import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, sessionCapabilities, statusMeter, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
+import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, runControls, sessionCapabilities, statusMeter, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
 
 /**
  * The host writes a job notice as a status line followed by model instructions; only the status
@@ -109,7 +109,7 @@ export interface PresentationInput {
 	readonly sessions: readonly Session[];
 	readonly projects?: readonly ProjectView[];
 	readonly selectedProject?: string;
-	readonly expandedProjects?: readonly string[];
+	readonly projectsRevealed: boolean;
 	readonly workspaces: readonly WorkspaceGrantView[];
 	readonly connection?: ClientConnection;
 	readonly catalog?: ModelCatalog;
@@ -142,7 +142,15 @@ export function pythonView(input: PresentationInput): WebView {
 	const session = input.sessions.find(item => item.session_id === connection?.sessionId);
 	const cwd = input.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";
 	const directory = pythonDirectory(input.sessions, input.projects ?? [], input.workspaces);
-	const roster = rosterItems(locale, directory, connection?.sessionId, Date.now(), input.rosterFilter);
+	const sidebar = sidebarDocument({
+		locale,
+		directory,
+		attachedId: connection?.sessionId,
+		now: Date.now(),
+		filter: input.rosterFilter,
+		selectedProjectId: input.selectedProject,
+		projectsRevealed: input.projectsRevealed === true,
+	});
 	const selected = input.selection ?? (catalog ? { provider: catalog.current.provider, model: catalog.current.model } : undefined);
 	const availableProviders = new Set(input.connections?.state.providers.filter(provider => provider.available).map(provider => provider.id));
 	const enabledModelIds = (input.connections?.enabledModels ?? []).map(model => `${model.provider}/${model.modelId}`)
@@ -162,9 +170,7 @@ export function pythonView(input: PresentationInput): WebView {
 		: !readOnly && snapshot && ["blocked", "stopping"].includes(snapshot.state)
 			? translate(locale, snapshot.state === "blocked" ? "greeting.blocked" : "greeting.stopping")
 			: undefined;
-	return { ...base, typography: input.typography, modelConnections: input.connections, roster, approvalPolicy: input.approvalPolicy,
-		projects: projectGroups(directory, roster, input.selectedProject, input.rosterFilter, input.expandedProjects),
-		archivedAttached: session?.archived ? rosterItems(locale, directory, connection?.sessionId, Date.now(), "", true).find(item => item.id === connection?.sessionId) : undefined,
+	return { ...base, typography: input.typography, modelConnections: input.connections, sidebar, approvalPolicy: input.approvalPolicy,
 		rosterFilter: input.rosterFilter, transcriptScope: connection ? `${connection.identity.profile_id}:${connection.sessionId}` : undefined,
 		attachedId: connection?.ready ? connection.sessionId : undefined, sessionLabel: session?.title,
 		readOnly: !capabilities.chat,

@@ -970,7 +970,7 @@ function EmptyState({ view, actions }: TranscriptProps) {
 				) : null}
 				{view.readOnly === true ? (
 					<div className="empty-actions">
-						{view.archivedAttached === undefined ? (
+						{view.sidebar.archivedAttached === undefined ? (
 							<button
 								type="button"
 								className="panel-button weight-filled"
@@ -1023,8 +1023,8 @@ function EmptyState({ view, actions }: TranscriptProps) {
 	const unavailable =
 		!view.newSession.enabled && view.newSession.pending !== true;
 	const filtered =
-		view.rosterFilter.trim().length > 0 && view.roster.length === 0;
-	const hasSessions = view.roster.length > 0;
+		view.rosterFilter.trim().length > 0 && view.sidebar.recent.length === 0;
+	const hasSessions = view.sidebar.recent.length > 0;
 	const title = unavailable
 		? "greeting.waitTitle"
 		: filtered

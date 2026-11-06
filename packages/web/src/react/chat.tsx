@@ -16,11 +16,10 @@ export type TranscriptView = Pick<
 	| "history"
 	| "status"
 	| "busy"
-	| "roster"
+	| "sidebar"
 	| "rosterFilter"
 	| "newSession"
 	| "sessionDraft"
-	| "archivedAttached"
 	| "model"
 	| "empty"
 >;

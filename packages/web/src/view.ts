@@ -1,6 +1,6 @@
 /** Pure client presentation contracts. Python owns session and execution state. */
 import { DEFAULT_TYPOGRAPHY, type Typography } from "./typography.ts";
-import type { ProjectGroup } from "./projects.ts";
+import type { SidebarDocument } from "./sidebar.ts";
 import type { ApprovalPolicy } from "./permission-picker.ts";
 import type { Locale } from "./locale.ts";
 import type { ProviderAuthLike } from "./provider-auth.ts";
@@ -9,7 +9,7 @@ import { CHAT_VIEW, panelView, type PanelButton, type PanelView } from "./panels
 import { dockView, type DockView } from "./dock.ts";
 import { commandPalette, type CommandPalette } from "./commands.ts";
 import { shortcuts, type Shortcut } from "./shortcuts.ts";
-import { translate, thinkingLevelCopy, toolTitleCopy, type MessageKey } from "./strings.ts";
+import { translate, thinkingLevelCopy, toolTitleCopy } from "./strings.ts";
 import { errorMessageCopy } from "./errors.ts";
 import type { ToolResultView } from "./tool-results.ts";
 import type { QuestionView } from "./generated/contracts.ts";
@@ -112,8 +112,6 @@ export interface RosterItem {
 	readonly attached: boolean;
 	/** Where the session lives: one this host owns, or a terminal session it can adopt. */
 	readonly source: "host" | "local";
-	/** The time bucket the roster lists the session under. */
-	readonly group: RosterGroupId;
 }
 
 /** One catalog entry the picker offers. */
@@ -427,11 +425,7 @@ export interface WebView {
 	readonly locale: Locale;
 	/** Namespace of the displayed transcript; independent of whether sending is currently available. */
 	readonly transcriptScope?: string;
-	/** The roster, narrowed by the reader's filter. */
-	readonly roster: readonly RosterItem[];
-	readonly projects?: readonly ProjectGroup[];
-	/** The one archived session the reader currently has open, pinned under the projects. */
-	readonly archivedAttached?: RosterItem;
+	readonly sidebar: SidebarDocument;
 	/** The chat projection of `capabilities.chat`; other surfaces read `capabilities` directly. */
 	readonly readOnly?: boolean;
 	/** One authority for what the attached session may do, derived from its archived state. */
@@ -684,50 +678,7 @@ export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefi
 			ageIso: new Date(session.archivedAt ?? session.createdAt).toISOString(),
 			attached: attachedId === session.sessionId,
 			source: session.source ?? "host",
-			group: rosterGroupOf(session.createdAt, now),
 		}));
-}
-
-/** The roster's time buckets, newest first. */
-export type RosterGroupId = "today" | "yesterday" | "week" | "earlier";
-
-/** The local midnight `offset` days from the day `now` falls on. */
-function dayStart(now: number, offset: number): number {
-	const day = new Date(now);
-	day.setHours(0, 0, 0, 0);
-	day.setDate(day.getDate() + offset);
-	return day.getTime();
-}
-
-/** The bucket a session made at `createdAt` belongs to. A timestamp ahead of the clock counts as today. */
-export function rosterGroupOf(createdAt: number, now: number): RosterGroupId {
-	if (createdAt >= dayStart(now, 0)) return "today";
-	if (createdAt >= dayStart(now, -1)) return "yesterday";
-	if (createdAt >= dayStart(now, -7)) return "week";
-	return "earlier";
-}
-
-/** One bucket of the roster, with its label in the reader's language. */
-export interface RosterGroup {
-	readonly id: RosterGroupId;
-	readonly label: string;
-	readonly items: readonly RosterItem[];
-}
-
-const ROSTER_GROUP_LABELS: readonly { readonly id: RosterGroupId; readonly message: MessageKey }[] = [
-	{ id: "today", message: "roster.today" },
-	{ id: "yesterday", message: "roster.yesterday" },
-	{ id: "week", message: "roster.week" },
-	{ id: "earlier", message: "roster.earlier" },
-];
-
-/** The roster in its buckets, in bucket order and then newest first. An empty bucket is left out. */
-export function rosterGroups(locale: Locale, items: readonly RosterItem[]): RosterGroup[] {
-	return ROSTER_GROUP_LABELS.map(({ id, message }) => ({
-		id,
-		label: translate(locale, message),
-		items: items.filter((item) => item.group === id),
-	})).filter((group) => group.items.length > 0);
 }
 
 /** The attached session's readable name, or the untitled label when `/name` has not set one. */
@@ -854,7 +805,7 @@ export function failureView(locale: Locale, text: string): WebView {
 		locale,
 		typography: { ...DEFAULT_TYPOGRAPHY },
 		capabilities: sessionCapabilities(true),
-		roster: [],
+		sidebar: { projects: [], recent: [] },
 		rosterFilter: "",
 		focus: undefined,
 		lane: "",

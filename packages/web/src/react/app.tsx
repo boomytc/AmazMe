@@ -40,8 +40,8 @@ import {
 } from "../shortcuts.ts";
 import { translate } from "../strings.ts";
 import { applyTypography } from "../typography.ts";
-import type { RosterItem } from "../view.ts";
-import { rosterGroups, sessionMenuItems, windowTitle } from "../view.ts";
+import type { SidebarSession } from "../sidebar.ts";
+import { sessionMenuItems, windowTitle } from "../view.ts";
 import { Composer, Transcript } from "./chat.tsx";
 import { Dock } from "./dock.tsx";
 import { Management, ManagementModal } from "./management.tsx";
@@ -186,7 +186,7 @@ function SessionRow({
 	locale,
 	actions,
 }: {
-	readonly item: RosterItem;
+	readonly item: SidebarSession;
 	readonly locale: Locale;
 	readonly actions: PageRenderer;
 }) {
@@ -204,13 +204,15 @@ function SessionRow({
 				onClick={() => actions.onSelect(item.id)}
 			>
 				<span className="session-name">{item.label}</span>
-				<time className="session-age" dateTime={item.ageIso}>
-					{item.age}
-				</time>
+				{item.kind === "archived" ? (
+					<time className="session-age" dateTime={item.ageIso}>
+						{item.age}
+					</time>
+				) : null}
 			</button>
 			<RosterMenu
 				label={`${copy("sidebar.more")}: ${item.label}`}
-				items={sessionMenuItems(locale, { archived: item.archived === true })}
+				items={sessionMenuItems(locale, { archived: item.kind === "archived" })}
 				run={(id) => actions.onPanelAction({ kind: "command", id, data: item.id })}
 			/>
 		</div>
@@ -422,9 +424,8 @@ function Navigation({
 		translate(view.locale, key);
 	const report = (id: string, data?: string) =>
 		actions.onPanelAction({ kind: "command", id, data });
-	const standalone = view.roster.filter((item) => !item.projectId);
-	const groups = rosterGroups(view.locale, standalone);
-	const hasProjects = (view.projects?.length ?? 0) > 0;
+	const sidebar = view.sidebar;
+	const fold = sidebar.projectFold;
 	const filterField = useRef<HTMLInputElement>(null);
 	const filterToggle = useRef<HTMLButtonElement>(null);
 	const closeFilter = (focusToggle = false) => {
@@ -468,17 +469,6 @@ function Navigation({
 					>
 						<Icon name="search" />
 					</button>
-					{hasProjects ? null : (
-						<button
-							type="button"
-							className="icon-button"
-							aria-label={copy("project.add")}
-							title={copy("project.add")}
-							onClick={() => report(P.PROJECT_ADD_ACTION)}
-						>
-							<Icon name="plus" />
-						</button>
-					)}
 				</div>
 				<div
 					className="roster-filter sidebar-filter"
@@ -519,9 +509,9 @@ function Navigation({
 						<Icon name="x" />
 					</button>
 				</div>
-				<p className="sidebar-label">
-					{copy(hasProjects ? "project.projects" : "sidebar.sessions")}
-					{hasProjects && (
+				<div className="session-list" id="roster">
+					<p className="sidebar-label">
+						{copy("project.projects")}
 						<button
 							type="button"
 							className="project-add"
@@ -531,115 +521,60 @@ function Navigation({
 						>
 							<Icon name="plus" />
 						</button>
-					)}
-				</p>
-				<div className="session-list" id="roster">
-					{hasProjects && (
-						<>
-							{(view.projects ?? []).map((project) => (
-								<section
-									className={`project-group${project.selected ? " selected" : ""}`}
-									key={project.id}
-								>
-									<div className="project-heading">
-										<button
-											className="project-select"
-											type="button"
-											aria-expanded={project.expanded}
-											title={project.cwd}
-											onClick={() =>
-												report(P.PROJECT_SELECT_ACTION, project.id)
-											}
-										>
-											<Icon name="folder" />
-											<span className="project-name">{project.name}</span>
-										</button>
-										<button
-											className="project-action project-new-session"
-											type="button"
-											disabled={
-												!view.newSession.enabled || view.newSession.pending
-											}
-											aria-label={`${copy("sidebar.newSession")}: ${project.name}`}
-											onClick={() =>
-												report(P.PROJECT_NEW_SESSION_ACTION, project.id)
-											}
-										>
-											<Icon name="plus" />
-										</button>
-										<RosterMenu
-											label={project.name}
-											items={[
-												{
-													id: P.PROJECT_EDIT_ACTION,
-													label: copy("project.edit"),
-												},
-												{
-													id: P.PROJECT_REMOVE_ACTION,
-													label: copy("project.remove"),
-													danger: true,
-												},
-											]}
-											run={(id) => report(id, project.id)}
-										/>
-									</div>
-									{project.expanded &&
-										project.items.map((item) => (
-											<SessionRow
-												key={item.id}
-												item={item}
-												locale={view.locale}
-												actions={actions}
-											/>
-										))}
-								</section>
-							))}
-						</>
-					)}
-					{hasProjects ? (
-						<>
-							{standalone.length > 0 && (
-								<p className="session-group-label">
-									{copy("sidebar.sessions")}
-								</p>
-							)}
-							{standalone.map((item) => (
-								<SessionRow
-									key={item.id}
-									item={item}
-									locale={view.locale}
-									actions={actions}
-								/>
-							))}
-						</>
-					) : groups.length > 1 ? (
-						groups.map((group) => (
-							<section className="roster-group" key={group.id}>
-								<p className="roster-group-title">{group.label}</p>
-								{group.items.map((item) => (
-									<SessionRow
-										key={item.id}
-										item={item}
-										locale={view.locale}
-										actions={actions}
-									/>
-								))}
-							</section>
-						))
-					) : (
-						/* One time bucket is not a grouping: the section label already says Sessions. */
-						(groups[0]?.items ?? []).map((item) => (
-							<SessionRow
-								key={item.id}
-								item={item}
-								locale={view.locale}
-								actions={actions}
+					</p>
+					{sidebar.projects.map((project) => (
+						<div
+							className={`project-heading${project.selected ? " selected" : ""}`}
+							key={project.id}
+						>
+							<button
+								type="button"
+								className="project-select"
+								title={project.cwd}
+								aria-current={project.selected ? "true" : undefined}
+								onClick={() => report(P.PROJECT_SELECT_ACTION, project.id)}
+							>
+								<Icon name="folder" />
+								<span className="project-name">{project.name}</span>
+							</button>
+							<button
+								type="button"
+								className="project-action project-new-session"
+								disabled={!view.newSession.enabled || view.newSession.pending}
+								aria-label={`${copy("sidebar.newSession")}: ${project.name}`}
+								onClick={() => report(P.PROJECT_NEW_SESSION_ACTION, project.id)}
+							>
+								<Icon name="plus" />
+							</button>
+							<RosterMenu
+								label={project.name}
+								items={project.menu}
+								run={(id) => report(id, project.id)}
 							/>
-						))
+						</div>
+					))}
+					{fold === undefined ? null : (
+						<button
+							type="button"
+							className="sidebar-fold"
+							aria-expanded={fold.expanded}
+							onClick={() => actions.onRevealProjects(fold.reveal)}
+						>
+							{fold.label}
+						</button>
 					)}
-					{view.archivedAttached && (
+					<p className="sidebar-label">{copy("sidebar.recent")}</p>
+					{sidebar.recent.map((item) => (
 						<SessionRow
-							item={view.archivedAttached}
+							key={item.id}
+							item={item}
+							locale={view.locale}
+							actions={actions}
+						/>
+					))}
+					{sidebar.archivedAttached === undefined ? null : (
+						<SessionRow
+							item={sidebar.archivedAttached}
 							locale={view.locale}
 							actions={actions}
 						/>

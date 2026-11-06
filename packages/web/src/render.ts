@@ -71,6 +71,8 @@ export interface PageRenderer {
 	onAttachFiles: (files: readonly File[]) => void;
 	/** The roster's filter text; the page owns it so it survives a repaint. */
 	onFilterRoster: (text: string) => void;
+	/** Whether every project name is listed. The page owns the flag, the same way it owns the filter text. */
+	onRevealProjects: (reveal: boolean) => void;
 	/** A shortcut fired: the page turns it into its action. */
 	onShortcut: (id: ShortcutId) => void;
 	/** The palette's highlighted row changed, so the page can re-render it. */

@@ -96,7 +96,7 @@ export class PageRuntime {
 	private workspaces: WorkspaceGrantView[] = [];
 	private projects: ProjectView[] = [];
 	private selectedProject?: string;
-	private expandedProjects: readonly string[] = [];
+	private projectsRevealed = false;
 	private sessionEdit?: Session;
 	private projectEdit?: ProjectView;
 	private skillEdit?: {
@@ -384,6 +384,10 @@ export class PageRuntime {
 		};
 		this.renderer.onFilterRoster = (text) => {
 			this.rosterFilter = text;
+			this.render();
+		};
+		this.renderer.onRevealProjects = (reveal) => {
+			this.projectsRevealed = reveal;
 			this.render();
 		};
 		this.renderer.onAttachFiles = (files) => run(() => this.attachFiles(files));
@@ -793,11 +797,6 @@ export class PageRuntime {
 		if (session.prepared === false)
 			throw new Error("分叉仍在准备，请先重试原创建请求");
 		this.selectedProject = session.project_id || undefined;
-		if (
-			this.selectedProject &&
-			!this.expandedProjects.includes(this.selectedProject)
-		)
-			this.expandedProjects = [...this.expandedProjects, this.selectedProject];
 		const connecting = this.client.connect(id);
 		this.drafts.select(id);
 		this.enabledModels = this.sessionModelIds(id);
@@ -2370,10 +2369,6 @@ export class PageRuntime {
 		if (id === Projects.PROJECT_SELECT_ACTION) {
 			if (!project) throw new Error("项目不存在");
 			this.selectedProject = project.project_id;
-			this.expandedProjects = Projects.toggleExpandedProjects(
-				this.expandedProjects,
-				project.project_id,
-			);
 			this.render();
 			return true;
 		}
@@ -2478,13 +2473,7 @@ export class PageRuntime {
 				});
 				if (sessionStorage.getItem(key) === JSON.stringify(record))
 					sessionStorage.removeItem(key);
-				if (this.panels.modal === modal) {
-					this.selectedProject = created.project_id;
-					this.expandedProjects = [
-						...this.expandedProjects,
-						created.project_id,
-					];
-				}
+				if (this.panels.modal === modal) this.selectedProject = created.project_id;
 			} else if (original)
 				await this.client.call("PUT /api/v1/projects/{project_id}", {
 					path: { project_id: original.project_id },
@@ -2676,7 +2665,7 @@ export class PageRuntime {
 			sessions: this.sessions,
 			projects: this.projects,
 			selectedProject: this.selectedProject,
-			expandedProjects: this.expandedProjects,
+			projectsRevealed: this.projectsRevealed,
 			workspaces: this.workspaces,
 			connection,
 			catalog: this.providers.catalog,
