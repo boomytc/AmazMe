@@ -3,7 +3,7 @@ import * as A from "../actions.ts";
 import { type CommandLike, parseCommandLine } from "../commands.ts";
 import { desktopBridge } from "../desktop.ts";
 import { dockView, isDockTabId, parseWorkspaceAction } from "../dock.ts";
-import { errorMessageCopy } from "../errors.ts";
+import { apiErrorMessageCopy, errorMessageCopy } from "../errors.ts";
 import type {
 	AnswerFeedbackList,
 	GitDiff,
@@ -42,7 +42,7 @@ import * as P from "../panels.ts";
 import type { ApprovalPolicy } from "../permission-picker.ts";
 import * as Projects from "../projects.ts";
 import { providerAuthModal } from "../provider-auth.ts";
-import type { PageRenderer } from "../render.ts";
+import type { PageRenderer, ToastSource } from "../render.ts";
 import { translate } from "../strings.ts";
 import { followSystemTheme } from "../theme.ts";
 import { toolResultView } from "../tool-results.ts";
@@ -284,8 +284,9 @@ export class PageRuntime {
 							: ("connecting" as const);
 			const recovered = state === "connected" && this.connectionNotice !== "connected";
 			this.connectionNotice = state;
-			/* A recovered connection retires the failures it left on screen; info cards keep clocks. */
-			if (recovered) this.renderer.clearErrorToasts();
+			/* A recovered connection retires the failures it left on screen; operation failures and
+			   info cards keep their cards, so a session switch cannot clear an unrelated save error. */
+			if (recovered) this.renderer.clearConnectionErrors();
 			if (state === "connected")
 				this.renderer.setConnectionState(connectedCopy, "connected");
 			else if (state === "unavailable")
@@ -294,7 +295,7 @@ export class PageRuntime {
 				this.renderer.setConnectionState(disconnectedCopy, "disconnected");
 			else this.renderer.setConnectionState(connectingCopy, "connecting");
 		};
-		this.client.onError = (error) => this.error(error);
+		this.client.onError = (error) => this.error(error, "connection");
 		this.client.onChange = () => {
 			const connection = this.client.connection;
 			this.render();
@@ -451,17 +452,18 @@ export class PageRuntime {
 		this.stopTheme = followSystemTheme();
 		this.render();
 	}
-	private error(error: unknown): void {
+	private error(error: unknown, source: ToastSource = "operation"): void {
 		const message = error instanceof Error ? error.message : String(error);
 		/* A failure the reader can act on stays until dismissed. A pending-connection notice is a
 		   transient condition with its own retry surface (session screen or titlebar), so it keeps
-		   the timed card instead of stacking sticky copies. */
+		   the timed card instead of stacking sticky copies. An API error owns a machine code: the
+		   code's copy wins over its internal message, which may be a raw diagnostic. */
 		const transient = message === "请等待会话连接完成";
-		this.renderer.showToast(
-			errorMessageCopy(this.preferences.locale, message),
-			"error",
-			!transient,
-		);
+		const copy =
+			error instanceof ApiError
+				? apiErrorMessageCopy(this.preferences.locale, error.code, message)
+				: errorMessageCopy(this.preferences.locale, message);
+		this.renderer.showToast(copy, "error", !transient, source);
 		this.render();
 	}
 	private requireConnection(): ClientConnection {

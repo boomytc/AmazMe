@@ -37,6 +37,8 @@ const ERROR_KEYS: Readonly<Record<string, MessageKey>> = {
 	local_host_not_ready: "error.hostStarting",
 	worker_restart_budget_exhausted: "error.sessionRestartExhausted",
 	worker_blocked: "error.sessionBlocked",
+	diagnostic_worker_unavailable: "error.sessionWorkerUnavailable",
+	execution_blocked: "error.executionBlocked",
 	worker_busy: "error.sessionBusy",
 	local_host_busy: "error.sessionBusy",
 	execution_cleanup_pending: "error.cleanupPending",
@@ -112,6 +114,14 @@ export function errorMessageCopy(locale: Locale, message: string): string {
 		const path = detail.indexOf("'");
 		return `${prefix}${copy}: ${path < 0 ? detail : detail.slice(path)}`;
 	});
+}
+
+/**
+ * An API error envelope carries a wire code and an internal message. Prefer the code's page copy so
+ * internal reasons (for example `storage_failure` behind `execution_blocked`) stay off the page.
+ */
+export function apiErrorMessageCopy(locale: Locale, code: string, message: string): string {
+	return errorCodeCopy(locale, code) ?? errorMessageCopy(locale, message);
 }
 
 /** Harness remarks are structured separately from the tool's own stdout and returned data. */

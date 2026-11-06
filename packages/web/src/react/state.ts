@@ -1,4 +1,4 @@
-import type { PageRenderer, ToastTone, WindowApp } from "../render.ts";
+import type { PageRenderer, ToastSource, ToastTone, WindowApp } from "../render.ts";
 import { translate } from "../strings.ts";
 import type { WebView } from "../view.ts";
 import { sameViewValue } from "../view-equality.ts";
@@ -86,6 +86,8 @@ export interface ToastMessage {
 	readonly text: string;
 	readonly tone: ToastTone;
 	readonly persistent: boolean;
+	/** Connection failures retire with the reconnect; operation failures wait for a dismissal. */
+	readonly source: ToastSource;
 }
 
 /** At most five cards stand at once; an identical message reuses its card instead of stacking. */
@@ -259,23 +261,42 @@ export class Presentation implements PageRenderer {
 		stage(this.composer, view);
 		for (const notify of notifications) notify();
 	}
-	showToast(text: string, tone: ToastTone = "info", persistent = false): void {
+	showToast(
+		text: string,
+		tone: ToastTone = "info",
+		persistent = false,
+		source: ToastSource = "operation",
+	): void {
 		if (this.disposed || text.trim().length === 0) return;
 		const current = this.toasts.getSnapshot();
-		/* A repeating identical diagnostic keeps the standing card and its original clock. */
+		/* A repeating identical diagnostic keeps the standing card and its original clock. A later
+		   operation failure outranks an earlier connection failure: the card must not disappear
+		   with the next reconnect. */
 		const standing = current.find((item) => item.text === text && item.tone === tone);
 		if (standing !== undefined) {
-			if (persistent && !standing.persistent)
+			const nextPersistent = standing.persistent || persistent;
+			const nextSource =
+				standing.source === "operation" ? standing.source : source;
+			if (
+				nextPersistent !== standing.persistent ||
+				nextSource !== standing.source
+			)
 				this.toasts.publish(
 					current.map((item) =>
-						item.id === standing.id ? { ...item, persistent: true } : item,
+						item.id === standing.id
+							? {
+									...item,
+									persistent: nextPersistent,
+									source: nextSource,
+								}
+							: item,
 					),
 				);
 			return;
 		}
 		this.toastId += 1;
 		const next: ToastMessage[] = [
-			{ id: this.toastId, text, tone, persistent },
+			{ id: this.toastId, text, tone, persistent, source },
 			...current,
 		];
 		/* Overflow retires an expiring card first; a wall of failures is never dropped silently
@@ -297,14 +318,16 @@ export class Presentation implements PageRenderer {
 		if (remaining.length !== current.length) this.toasts.publish(remaining);
 	}
 	/**
-	 * Recovery clears standing failures; informational cards keep their clocks. Deliberately blunt:
-	 * a later failure posts again, and one clear per recovery beats tracking which card came from
-	 * the connection that just recovered.
+	 * Recovery retires only the failures the broken connection produced; informational cards keep
+	 * their clocks and operation failures (a save that did not land) stay until dismissed, even
+	 * though a session switch also cycles through connecting and connected.
 	 */
-	clearErrorToasts(): void {
+	clearConnectionErrors(): void {
 		if (this.disposed) return;
 		const current = this.toasts.getSnapshot();
-		const remaining = current.filter((item) => item.tone !== "error");
+		const remaining = current.filter(
+			(item) => item.tone !== "error" || item.source !== "connection",
+		);
 		if (remaining.length !== current.length) this.toasts.publish(remaining);
 	}
 	setConnectionState(

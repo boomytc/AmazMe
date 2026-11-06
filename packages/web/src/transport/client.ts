@@ -34,9 +34,12 @@ export type ConnectionStatus =
 	| "unavailable"
 	| "disconnected";
 
-/** Host policy closes that describe the session runtime, not the host transport itself. */
+/**
+ * Host policy closes that describe the session runtime, not the host transport itself. The reason is
+ * a backend error code; an unavailable diagnostic worker also arrives as close(1008) this way.
+ */
 const SESSION_CLOSE_REASON =
-	/^(?:startup_timeout|supervisor_|worker_|local_host_|execution_cleanup_pending|attachment_capacity|stream_timeout|cursor_unavailable|stream_frame_too_large)/u;
+	/^(?:startup_timeout|supervisor_|worker_|local_host_|execution_blocked|execution_cleanup_pending|diagnostic_worker_unavailable|attachment_capacity|stream_timeout|cursor_unavailable|stream_frame_too_large)/u;
 
 class ConnectionIdentityError extends Error {}
 

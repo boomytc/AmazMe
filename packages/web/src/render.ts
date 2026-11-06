@@ -26,6 +26,13 @@ type ConnectionState = "connecting" | "connected" | "unavailable" | "disconnecte
 /** A transient message's weight in the top-right toast layer. */
 export type ToastTone = "info" | "error";
 
+/**
+ * Who produced a failure. Recovery retires connection failures because the transport that reported
+ * them is gone; an operation failure (a save that did not land) outlives the reconnect and stays
+ * until the reader dismisses it.
+ */
+export type ToastSource = "connection" | "operation";
+
 export interface PageRenderer {
 	syncDraft?(text: string): void;
 	dispose?(): void;
@@ -35,15 +42,21 @@ export interface PageRenderer {
 	/**
 	 * Post a message in the window's top-right layer. It never occupies page layout, and a repeated
 	 * text reuses the standing card instead of stacking or restarting its clock. Transient cards
-	 * retire after 2.5s; `persistent` cards wait for the reader to dismiss them.
+	 * retire after 2.5s; `persistent` cards wait for the reader to dismiss them. `source` defaults
+	 * to an operation failure, which connection recovery never retires.
 	 */
-	showToast(text: string, tone?: ToastTone, persistent?: boolean): void;
+	showToast(
+		text: string,
+		tone?: ToastTone,
+		persistent?: boolean,
+		source?: ToastSource,
+	): void;
 	/**
-	 * Retire standing error cards once the connection recovers; informational cards keep their
-	 * clocks. The accepted trade-off is one clear per recovery: a later failure posts again, so the
-	 * page does not try to remember which card belonged to the connection that just recovered.
+	 * Retire the error cards a recovered connection left behind; operation failures and
+	 * informational cards stay. A session switch also reconnects the stream, so the page must not
+	 * infer "the failure belonged to the connection that just recovered" from the status change.
 	 */
-	clearErrorToasts(): void;
+	clearConnectionErrors(): void;
 	/** Show connectivity on the brand mark. */
 	setConnectionState(text: ConnectionText, state: ConnectionState): void;
 	/** Handlers the page entry fills in once it can drive the host. */
