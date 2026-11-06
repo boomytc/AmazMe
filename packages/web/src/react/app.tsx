@@ -1,4 +1,10 @@
-import type { ErrorInfo, ReactNode } from "react";
+import type {
+	ErrorInfo,
+	KeyboardEvent as ReactKeyboardEvent,
+	PointerEvent as ReactPointerEvent,
+	ReactElement,
+	ReactNode,
+} from "react";
 import {
 	Component,
 	useCallback,
@@ -16,6 +22,10 @@ import {
 	readDockPresentation,
 	storeDockPresentation,
 } from "../app/dock-preferences.ts";
+import {
+	readSidebarWidth,
+	storeSidebarWidth,
+} from "../app/sidebar-preferences.ts";
 import { desktopBridge } from "../desktop.ts";
 import type { Locale } from "../locale.ts";
 import { CHAT_VIEW, SETTINGS_VIEW } from "../panels.ts";
@@ -204,6 +214,199 @@ function SessionRow({
 				run={(id) => actions.onPanelAction({ kind: "command", id, data: item.id })}
 			/>
 		</div>
+	);
+}
+
+function lengthToken(style: CSSStyleDeclaration, name: string): number | null {
+	const value = parseFloat(style.getPropertyValue(name));
+	return Number.isFinite(value) ? Math.round(value) : null;
+}
+
+function sidebarPanel(grip: HTMLElement | null): HTMLElement | null {
+	const panel = grip?.parentElement;
+	return panel instanceof HTMLElement ? panel : null;
+}
+
+function clampSidebarWidth(panel: HTMLElement, width: number): number {
+	const style = getComputedStyle(panel);
+	const minimum = lengthToken(style, "--sidebar-min-width");
+	const maximum = lengthToken(style, "--sidebar-limit");
+	const low = minimum ?? Math.round(width);
+	const high = maximum === null ? Math.round(width) : Math.max(low, maximum);
+	return Math.min(high, Math.max(low, Math.round(width)));
+}
+
+function applySidebarWidth(width: number | null): void {
+	const style = document.documentElement.style;
+	if (width === null) style.removeProperty("--sidebar-width");
+	else style.setProperty("--sidebar-width", `${width}px`);
+}
+
+/** The sidebar's trailing-edge grip. The requested width is remembered; CSS clamps the column. */
+function SidebarResize({ locale }: { readonly locale: Locale }): ReactElement {
+	const grip = useRef<HTMLDivElement>(null);
+	const preferred = useRef<number | null>(null);
+	const resize = useRef<{
+		readonly pointerId: number;
+		readonly startX: number;
+		readonly startWidth: number;
+	} | null>(null);
+	const lastClickAt = useRef(0);
+	const motionTimer = useRef<number | undefined>(undefined);
+	const [splitter, setSplitter] = useState({ width: 0, minimum: 0, maximum: 0 });
+	const measureSplitter = useCallback(() => {
+		const panel = sidebarPanel(grip.current);
+		if (panel === null || resize.current !== null) return;
+		const width = Math.round(panel.getBoundingClientRect().width);
+		if (width <= 0) return;
+		const style = getComputedStyle(panel);
+		const minimum = lengthToken(style, "--sidebar-min-width");
+		const maximum = lengthToken(style, "--sidebar-limit");
+		if (minimum === null || maximum === null) return;
+		setSplitter((current) =>
+			current.width === width &&
+			current.minimum === minimum &&
+			current.maximum === maximum
+				? current
+				: { width, minimum, maximum },
+		);
+	}, []);
+	useLayoutEffect(() => {
+		preferred.current = readSidebarWidth();
+		applySidebarWidth(preferred.current);
+		return () => applySidebarWidth(null);
+	}, []);
+	useLayoutEffect(() => {
+		const panel = sidebarPanel(grip.current);
+		if (panel === null) return;
+		const sync = (): void => {
+			if (resize.current === null) measureSplitter();
+		};
+		sync();
+		const observer = new ResizeObserver(sync);
+		observer.observe(panel);
+		window.addEventListener("resize", sync);
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", sync);
+		};
+	}, [measureSplitter]);
+	const finishResize = useCallback(() => {
+		const state = resize.current;
+		if (state === null) return;
+		resize.current = null;
+		const handle = grip.current;
+		if (handle?.hasPointerCapture(state.pointerId))
+			handle.releasePointerCapture(state.pointerId);
+		document.body.classList.remove("sidebar-resizing");
+		storeSidebarWidth(preferred.current);
+		measureSplitter();
+	}, [measureSplitter]);
+	useEffect(() => {
+		return () => {
+			finishResize();
+			window.clearTimeout(motionTimer.current);
+			delete document.body.dataset.sidebarMotion;
+		};
+	}, [finishResize]);
+	const animateWidth = (apply: () => void): void => {
+		window.clearTimeout(motionTimer.current);
+		document.body.dataset.sidebarMotion = "width";
+		void document.body.offsetWidth;
+		apply();
+		motionTimer.current = window.setTimeout(() => {
+			delete document.body.dataset.sidebarMotion;
+		}, 340);
+	};
+	const resetWidth = (): void => {
+		preferred.current = null;
+		storeSidebarWidth(null);
+		animateWidth(() => applySidebarWidth(null));
+	};
+	const stopWidthMotion = (): void => {
+		window.clearTimeout(motionTimer.current);
+		delete document.body.dataset.sidebarMotion;
+	};
+	const startResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		const panel = sidebarPanel(event.currentTarget);
+		if (event.button !== 0 || panel === null) return;
+		const startWidth = panel.getBoundingClientRect().width;
+		if (startWidth <= 0) return;
+		event.preventDefault();
+		stopWidthMotion();
+		resize.current = {
+			pointerId: event.pointerId,
+			startX: event.clientX,
+			startWidth,
+		};
+		event.currentTarget.setPointerCapture(event.pointerId);
+		document.body.classList.add("sidebar-resizing");
+	};
+	const moveResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		const state = resize.current;
+		const panel = sidebarPanel(event.currentTarget);
+		if (state === null || state.pointerId !== event.pointerId || panel === null)
+			return;
+		const width = clampSidebarWidth(
+			panel,
+			state.startWidth + (event.clientX - state.startX),
+		);
+		preferred.current = width;
+		applySidebarWidth(width);
+	};
+	const endResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		const state = resize.current;
+		if (state === null || state.pointerId !== event.pointerId) return;
+		const moved = Math.abs(event.clientX - state.startX) > 3;
+		finishResize();
+		if (event.type !== "pointerup" || moved) {
+			lastClickAt.current = 0;
+			return;
+		}
+		const now = performance.now();
+		if (now - lastClickAt.current < 400) {
+			resetWidth();
+			lastClickAt.current = 0;
+			return;
+		}
+		lastClickAt.current = now;
+	};
+	/* Arrow keys step from the rendered width, so a window-clamped column does not spend the first
+	   press moving a preference the layout cannot show. */
+	const stepWidth = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+		if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+		event.preventDefault();
+		stopWidthMotion();
+		const panel = sidebarPanel(event.currentTarget);
+		if (panel === null) return;
+		const width = clampSidebarWidth(
+			panel,
+			panel.getBoundingClientRect().width + (event.key === "ArrowRight" ? 16 : -16),
+		);
+		preferred.current = width;
+		applySidebarWidth(width);
+		storeSidebarWidth(width);
+	};
+	return (
+		<div
+			ref={grip}
+			className="sidebar-resize"
+			id="sidebar-resize"
+			role="separator"
+			aria-orientation="vertical"
+			aria-label={translate(locale, "sidebar.resize")}
+			aria-valuemin={splitter.minimum}
+			aria-valuemax={splitter.maximum}
+			aria-valuenow={splitter.width}
+			tabIndex={0}
+			onKeyDown={stepWidth}
+			onPointerDown={startResize}
+			onPointerMove={moveResize}
+			onPointerUp={endResize}
+			onPointerCancel={endResize}
+			onLostPointerCapture={endResize}
+			onDoubleClick={resetWidth}
+		/>
 	);
 }
 
@@ -443,6 +646,7 @@ function Navigation({
 					)}
 				</div>
 			</div>
+			<SidebarResize locale={view.locale} />
 		</aside>
 	);
 }
@@ -735,13 +939,23 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			sidebarToggledManually.current = false;
 		}
 		if (currentPanel !== CHAT_VIEW) stopDockMotion();
-		body.classList.toggle("library-open", currentPanel !== CHAT_VIEW);
+		/* Leaving the class that disables transitions would ease the reveal in the same change.
+		   Freeze the transition across the swap so the management window still cuts over at once. */
+		const library = currentPanel !== CHAT_VIEW;
+		const swapLibrary = body.classList.contains("library-open") !== library;
+		if (swapLibrary) body.style.transition = "none";
+		body.classList.toggle("library-open", library);
 		body.classList.toggle("sidebar-collapsed", collapsed || narrowOpening);
 		body.classList.toggle("dock-open", dockOpen);
+		if (swapLibrary) {
+			void body.offsetWidth;
+			body.style.transition = "";
+		}
 	}, [dockOpen, currentPanel, collapsed, stopDockMotion]);
 	useLayoutEffect(
 		() => () => {
 			stopDockMotion();
+			document.body.style.transition = "";
 			document.body.classList.remove(
 				"dock-open",
 				"library-open",

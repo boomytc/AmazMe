@@ -196,6 +196,7 @@ export const EN = {
 	"sidebar.management": "Management",
 	"sidebar.waiting": "Waiting for the host…",
 	"sidebar.toggle": "Show or hide the sidebar",
+	"sidebar.resize": "Resize sidebar",
 
 	"roster.today": "Today",
 	"roster.yesterday": "Yesterday",
@@ -1147,6 +1148,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"sidebar.management": "管理",
 	"sidebar.waiting": "正在等待宿主…",
 	"sidebar.toggle": "显示或隐藏侧栏",
+	"sidebar.resize": "调整侧栏宽度",
 
 	"roster.today": "今天",
 	"roster.yesterday": "昨天",

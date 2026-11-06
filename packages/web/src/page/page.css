@@ -27,17 +27,39 @@
 	initial-value: 300px;
 }
 
-/* The sidebar hands its track back and forth on the same curve as the dock, so opening a panel in
-   a narrow window slides the reading column instead of jumping it. */
+/* Collapse animates the reveal fraction, the same way the dock does. The width is a separate
+   preference: dragging updates it immediately, and the limit keeps a reading column plus the dock's
+   minimum when that panel is open. The limit does not read the dock track, because that track is
+   derived from this column. */
 @property --sidebar-track {
 	syntax: "<length>";
 	inherits: true;
 	initial-value: 268px;
 }
 
+@property --sidebar-reveal {
+	syntax: "<number>";
+	inherits: true;
+	initial-value: 1;
+}
+
+@property --sidebar-size {
+	syntax: "<length>";
+	inherits: true;
+	initial-value: 268px;
+}
+
+@property --sidebar-limit {
+	syntax: "<length>";
+	inherits: true;
+	initial-value: 480px;
+}
+
 :root {
 	--rail-width: 56px;
 	--sidebar-width: 268px;
+	--sidebar-min-width: 220px;
+	--sidebar-max-width: 480px;
 	--dock-min-width: 300px;
 	--dock-preferred-width: 45vw;
 	--column-max: 768px;
@@ -60,7 +82,10 @@ body {
 }
 
 body {
-	--sidebar-track: var(--sidebar-width);
+	--sidebar-limit: max(var(--sidebar-min-width), min(var(--sidebar-max-width), calc(100vw - var(--rail-width) - 560px - var(--dock-min-width) * var(--dock-reveal))));
+	--sidebar-size: clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-limit));
+	--sidebar-reveal: 1;
+	--sidebar-track: calc(var(--sidebar-size) * var(--sidebar-reveal));
 	--dock-limit: max(var(--dock-min-width), min(70vw, calc(100vw - var(--rail-width) - var(--sidebar-track) - 560px)));
 	--dock-width: clamp(var(--dock-min-width), var(--dock-preferred-width), var(--dock-limit));
 	--dock-track: calc(var(--dock-width) * var(--dock-reveal));
@@ -82,7 +107,7 @@ body {
 	line-height: 1.6;
 	-webkit-font-smoothing: antialiased;
 	text-rendering: optimizeLegibility;
-	transition: --dock-reveal var(--dur-slow) var(--ease-in-out), --sidebar-track var(--dur-slow) var(--ease-in-out);
+	transition: --dock-reveal var(--dur-slow) var(--ease-in-out), --sidebar-reveal var(--dur-slow) var(--ease-in-out);
 }
 
 /* The entry failed before the application could paint. No parallel application or hidden reload loop. */
@@ -136,7 +161,7 @@ body.dock-open {
 
 body.sidebar-collapsed,
 body.library-open {
-	--sidebar-track: 0px;
+	--sidebar-reveal: 0;
 }
 
 body.library-open {
@@ -411,6 +436,7 @@ p {
 /* ------------------------------------------------------------------ sidebar */
 
 .sidebar {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
@@ -418,6 +444,58 @@ p {
 	overflow: hidden;
 	padding: var(--space-10) var(--space-10) var(--space-12);
 	background: var(--sidebar);
+}
+
+/* The width grip sits on the sidebar's trailing edge. A hairline marks the boundary; hover, focus,
+   and an active drag thicken it. The hit target stays inside the column so the list's menu button,
+   which starts further in, keeps its own clicks. */
+.sidebar-resize {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: 10px;
+	cursor: col-resize;
+	z-index: var(--z-jump);
+	touch-action: none;
+}
+
+.sidebar-resize::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: 1px;
+	background: var(--line);
+	transition:
+		width var(--dur-fast) var(--ease),
+		background var(--dur-fast) var(--ease);
+}
+
+.sidebar-resize:hover::before,
+.sidebar-resize:focus-visible::before,
+body.sidebar-resizing .sidebar-resize::before {
+	width: 3px;
+	background: var(--accent);
+}
+
+.sidebar-resize:focus-visible {
+	outline: none;
+}
+
+body.sidebar-resizing,
+body.sidebar-resizing * {
+	cursor: col-resize;
+	user-select: none;
+}
+
+/* A double-click restores the default width and is the only change that eases the column. */
+body[data-sidebar-motion="width"]:not(.library-open) {
+	transition:
+		--dock-reveal var(--dur-slow) var(--ease-in-out),
+		--sidebar-reveal var(--dur-slow) var(--ease-in-out),
+		--sidebar-size var(--dur-slow) var(--ease-in-out);
 }
 
 .session-sidebar {
