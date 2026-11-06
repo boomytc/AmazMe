@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -21,6 +22,7 @@ from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.workspaces import WorkspaceGrantView
 from amazme_backend.platform.ipc import child_command
 from amazme_backend.platform.private_files import lock
+from amazme_backend.platform.resources import package_root
 from amazme_backend.profiles.locations import local_profile
 from amazme_backend.profiles.profile import Profile, live_host_ready
 from amazme_backend.shared.errors import BackendError
@@ -169,5 +171,13 @@ def main(arguments: list[str], mode: Literal["connect", "web", "doctor"] = "conn
         raise SystemExit(1) from None
     if mode == "web":
         print(result.url + "/?" + urlencode({"host": result.profile_id, "workspace": result.workspace}))
+        profile = Path(result.profile_path)
+        launcher = shlex.quote(str(package_root().parents[2] / "start.sh"))
+        profile_arg = shlex.quote(result.profile_path)
+        print("后台已就绪；关闭终端或页面不会停止后台。")
+        print(f"Profile：{profile}")
+        print(f"Host 日志：{profile / 'serve.err'}")
+        print(f"查询状态：{launcher} status --profile {profile_arg}")
+        print(f"停止后台（会断开所有客户端）：{launcher} stop --profile {profile_arg}")
     else:
         print(result.model_dump_json())

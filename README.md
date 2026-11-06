@@ -56,20 +56,20 @@ Web 和 Desktop 默认共用 `~/.amazme/agent/python-host`。Host 按需启动�
 ./start.sh web --workspace /absolute/project
 ```
 
-启动脚本编译 Web 依赖后直接运行 Python 的 `web` 命令，在后台启动或复用 Host，并输出包含工作区身份的窗口链接。用浏览器打开该链接即可；关闭页面不停止后台任务。启动时不创建额外的空会话，页面按原有选择恢复会话。
+启动脚本编译 Web 依赖后直接运行 Python 的 `web` 命令，在后台启动或复用 Host，并输出包含工作区身份的窗口链接、实际 profile、Host 日志路径及对应的查询和停服命令。用浏览器打开该链接即可；关闭终端或页面不停止后台任务。启动时不创建额外的空会话，页面按原有选择恢复会话。
 
 ### 后台管理与 Python SDK
 
-普通桌面和 Web 使用不需要手动启动服务。后台管理命令使用项目虚拟环境：
+普通桌面和 Web 使用不需要手动启动服务。后台管理也通过启动脚本执行，不依赖 npm 或前端产物，不触发构建：
 
 ```bash
-backend/.venv/bin/amazme-backend doctor
-backend/.venv/bin/amazme-backend stop
+./start.sh status
+./start.sh stop
 ```
 
-`doctor` 只检查已有 Host，不启动新后台；健康时退出码为 0，未就绪或不可用时为非零。`stop` 停止该 profile 的 Host 及所属服务，会影响所有连接它的客户端；重复停服安全。显式 `--profile /absolute/profile` 可选择其他业务目录。桌面也可使用菜单或托盘的「停止后台并退出」。
+`status` 直接调用 Python 的 `doctor`，输出健康状态 JSON，只检查已有 Host，不初始化 profile 或启动新后台；健康时退出码为 0，未就绪或不可用时为非零。`stop` 直接调用 Python 的同名命令，停止该 profile 的 Host 及所属服务，会影响所有连接它的客户端；重复停服安全。两者都可显式传入 `--profile /absolute/profile` 选择其他业务目录。桌面也可使用菜单或托盘的「停止后台并退出」。
 
-`connect --workspace /absolute/project` 返回供桌面使用的本机连接信息，其中包含私有连接令牌，不要把输出用于公开日志。`web` 只输出窗口链接，不包含令牌。新 profile 的 `init` 与前台 `serve`见 [Python 后端说明](backend/README.md)。
+`connect --workspace /absolute/project` 返回供桌面使用的本机连接信息，其中包含私有连接令牌，不要把输出用于公开日志。`web` 输出窗口链接和后台管理提示，不包含令牌。新 profile 的 `init` 与前台 `serve`见 [Python 后端说明](backend/README.md)。
 
 Python SDK 通过 Host URL 和连接令牌访问同一业务接口：
 
