@@ -701,6 +701,8 @@ export class PageRuntime {
 				return;
 			}
 			this.ready = health.state === "ready";
+			if (this.connectionNotice === "connected")
+				this.renderer.clearConnectionErrors();
 			const [feedback] = await Promise.all([
 				this.client.call("GET /api/v1/sessions/{session}/feedback", {
 					path: { session: connection.sessionId },
