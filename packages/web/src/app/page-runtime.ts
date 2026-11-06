@@ -7,6 +7,7 @@ import { apiErrorMessageCopy, errorMessageCopy } from "../errors.ts";
 import type {
 	AnswerFeedbackList,
 	GitDiff,
+	Health,
 	Identity,
 	McpCall,
 	PluginCallView,
@@ -681,7 +682,15 @@ export class PageRuntime {
 	private async poll(connection: ClientConnection): Promise<void> {
 		if (!connection.active()) return;
 		try {
-			const health = await this.client.call("GET /api/v1/health");
+			let health: Health;
+			try {
+				health = await this.client.call("GET /api/v1/health");
+			} catch (error) {
+				/* The probe measures the connection itself: its failure is the connection's, so a
+				   later recovery retires the card. The reads below are operation failures. */
+				if (connection.active()) this.error(error, "connection");
+				return;
+			}
 			if (!connection.active()) return;
 			if (health.identity.profile_id !== connection.identity.profile_id)
 				throw new Error("宿主身份已更换");
